@@ -87,30 +87,58 @@ export default function App() {
   const [lastWodResult, setLastWodResult] = useState<WodResult | null>(null);
   const [showHistory, setShowHistory] = useState(false);
 
+  // --- HR Zone Logic ---
+  const getHRZoneColor = (bpm: number) => {
+    if (bpm === 0) return 'text-on-surface-variant opacity-30';
+    if (bpm < 120) return 'text-hr-zone1'; // Recovery
+    if (bpm < 140) return 'text-hr-zone2'; // Aerobic
+    if (bpm < 160) return 'text-hr-zone3'; // Threshold
+    if (bpm < 180) return 'text-hr-zone4'; // Anaerobic
+    return 'text-hr-zone5'; // Redline
+  };
+
+  const getHRZoneBg = (bpm: number) => {
+    if (bpm === 0) return 'bg-surface-container-highest';
+    if (bpm < 120) return 'bg-hr-zone1/20';
+    if (bpm < 140) return 'bg-hr-zone2/20';
+    if (bpm < 160) return 'bg-hr-zone3/20';
+    if (bpm < 180) return 'bg-hr-zone4/20';
+    return 'bg-hr-zone5/20';
+  };
+
+  // --- API Integration ---
   useEffect(() => {
+    const fetchAthletes = async () => {
+      try {
+        const res = await fetch('/api/athletes');
+        const data = await res.json();
+        setAthletes(data);
+      } catch (err) {
+        console.error("Error fetching athletes:", err);
+      }
+    };
+
     const timer = setInterval(() => setTime(new Date()), 1000);
     const athleteTimer = setInterval(() => {
       setCurrentAthleteIndex((prev) => (prev + 1) % athletes.length);
     }, 8000);
+    
+    // Polling for real-time updates (Simulating WebSocket/Supabase)
+    const dataPolling = setInterval(fetchAthletes, 2000);
+
     return () => {
       clearInterval(timer);
       clearInterval(athleteTimer);
+      clearInterval(dataPolling);
     };
   }, [athletes.length]);
 
-  // WOD Timer and Progress Simulation
+  // WOD Timer
   useEffect(() => {
     let interval: NodeJS.Timeout;
     if (isWodActive) {
       interval = setInterval(() => {
         setWodSeconds((prev) => prev + 1);
-        
-        // Simulate progress
-        setAthletes((prev) => prev.map(athlete => ({
-          ...athlete,
-          progress: Math.min(100, athlete.progress + Math.random() * 2),
-          hr: athlete.hasWatch ? (140 + Math.floor(Math.random() * 40)) : 0
-        })));
       }, 1000);
     }
     return () => clearInterval(interval);
@@ -125,22 +153,26 @@ export default function App() {
 
   const currentAthlete = athletes[currentAthleteIndex];
 
-  const handleStartWod = () => {
-    if (isWodActive) {
-      // Saving results before stopping
-      const result: WodResult = {
-        time: formatWodTime(wodSeconds),
-        athletes: [...athletes].sort((a, b) => b.progress - a.progress),
-        date: new Date().toLocaleString('pt-BR')
-      };
-      setLastWodResult(result);
-      setIsWodActive(false);
-      setWodSeconds(0);
-      setAthletes(INITIAL_ATHLETES);
-      setShowHistory(true); // Auto-show results when stopped
-    } else {
-      setIsWodActive(true);
-      setShowHistory(false);
+  const handleStartWod = async () => {
+    try {
+      const res = await fetch('/api/wod/toggle', { method: 'POST' });
+      const data = await res.json();
+      
+      if (isWodActive) {
+        // Stopping
+        const result: WodResult = {
+          time: formatWodTime(wodSeconds),
+          athletes: [...athletes].sort((a, b) => b.progress - a.progress),
+          date: new Date().toLocaleString('pt-BR')
+        };
+        setLastWodResult(result);
+        setWodSeconds(0);
+        setShowHistory(true);
+      }
+      
+      setIsWodActive(data.isWodActive);
+    } catch (err) {
+      console.error("Error toggling WOD:", err);
     }
   };
 
@@ -363,7 +395,9 @@ export default function App() {
                               <div className="flex items-center gap-4">
                                 <div className="flex flex-col">
                                   <span className="text-xs text-primary/70 font-bold uppercase">HR</span>
-                                  <span className="text-2xl font-headline font-bold text-on-surface leading-tight">{currentAthlete.hr}</span>
+                                  <span className={`text-2xl font-headline font-bold leading-tight ${getHRZoneColor(currentAthlete.hr)}`}>
+                                    {currentAthlete.hr > 0 ? currentAthlete.hr : '--'}
+                                  </span>
                                 </div>
                                 <div className="h-8 w-px bg-outline-variant/30"></div>
                                 <div className="flex flex-col">
@@ -486,7 +520,7 @@ export default function App() {
                           <div className="flex items-center gap-6">
                             <div className="flex flex-col items-end">
                               <span className="text-[10px] text-primary/70 font-bold uppercase">HEART RATE</span>
-                              <span className="text-xl font-headline font-bold text-on-surface">
+                              <span className={`text-xl font-headline font-bold ${getHRZoneColor(athlete.hr)}`}>
                                 {athlete.hasWatch ? (
                                   <>{athlete.hr} <span className="text-xs opacity-50">BPM</span></>
                                 ) : (

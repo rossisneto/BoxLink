@@ -20,6 +20,13 @@
   --color-on-surface-variant: #adaaaa;
   --color-outline-variant: #494847;
   --color-on-primary-fixed: #3a4a00;
+
+  /* Heart Rate Zones */
+  --color-hr-zone1: #94a3b8; /* Recovery - Gray */
+  --color-hr-zone2: #22c55e; /* Aerobic - Green */
+  --color-hr-zone3: #eab308; /* Threshold - Yellow */
+  --color-hr-zone4: #f97316; /* Anaerobic - Orange */
+  --color-hr-zone5: #ef4444; /* Redline - Red */
 }
 
 @layer utilities {
