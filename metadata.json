@@ -1,5 +1,5 @@
 {
-  "name": "CrossCity Hub - Performance Dashboard",
+  "name": "crosscity-hub",
   "description": "A high-performance fitness dashboard for CrossFit boxes, featuring real-time WOD tracking, leaderboards, and athlete check-ins.",
   "requestFramePermissions": []
 }
