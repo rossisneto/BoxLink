@@ -1,94 +1,51 @@
-# CrossCity Hub - Performance Dashboard 🏋️‍♂️🔥
+# CrossCity Hub - Mobile App & Dashboard 🏋️‍♂️🔥
 
-Este é um dashboard de alta performance desenvolvido para boxes de CrossFit, otimizado para exibição em TVs. Ele oferece uma experiência visual imersiva para acompanhamento de treinos (WODs) em tempo real, rankings dinâmicos e histórico de resultados.
+Este é um ecossistema de alta performance para boxes de CrossFit, composto por um **Dashboard para TV** e um **Aplicativo Móvel Gamificado**.
 
-## 🚀 Funcionalidades Principais
+## 🚀 Funcionalidades do Aplicativo Móvel
 
-- **Layout Otimizado para TV:** Design limpo, fontes grandes e alto contraste para visualização à distância.
-- **Modo WOD Ativo (Competição):** Transição de tela para um modo focado no treino com cronômetro centralizado.
-- **Ranking em Tempo Real:** Barras de progresso dinâmicas que se reordenam automaticamente conforme os atletas avançam no WOD.
-- **Frequência Cardíaca Opcional:** Suporte para exibição de BPM para atletas com dispositivos conectados (exibe "Not Connected" para os demais).
-- **Histórico de Resultados:** Salvamento automático do ranking final ao encerrar o WOD, acessível via ícone de histórico.
-- **Branding Personalizado:** Identidade visual focada no "CrossCity Hub - CrossFit Elite".
+- **Interface Neon High-Performance:** Design otimizado para dispositivos móveis com alto contraste e foco em usabilidade.
+- **WOD Player:** Acompanhamento detalhado do treino do dia com cronômetro integrado.
+- **Real-Time HR Monitoring:** Integração com dispositivos vestíveis para monitoramento de BPM em tempo real.
+- **Leaderboard Global:** Ranking do box atualizado instantaneamente.
+- **Perfil do Atleta:** Gestão de PRs (Personal Records), benchmarks e conquistas (badges).
+- **Check-in Gealocalizado:** Confirmação de presença baseada na localização do box.
 
 ## 🛠️ Tecnologias Utilizadas
 
 - **React 19** + **Vite**
-- **Tailwind CSS 4.0** (Estilização baseada em utilitários e variáveis de tema)
-- **Framer Motion** (Animações fluidas e transições de estado)
-- **Lucide React** (Ícones modernos)
-- **Google Fonts** (Space Grotesk & Inter)
+- **Capacitor 8.2:** Para build nativo Android e iOS.
+- **Tailwind CSS 4.0:** Estilização moderna e responsiva.
+- **Framer Motion:** Animações de interface fluidas.
+- **Supabase:** Backend real-time para dados e autenticação.
 
-## 📦 Instalação e Configuração
+## 📦 Como Gerar o App Nativo
 
-Se você estiver integrando este frontend em um projeto existente:
-
-1. **Instale as dependências necessárias:**
+1. **Build do projeto web:**
    ```bash
-   npm install lucide-react motion
+   npm run build
    ```
 
-2. **Importe as fontes no seu CSS global (`index.css`):**
-   ```css
-   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@300;400;500;600;700&display=swap');
+2. **Sincronizar com o Capacitor:**
+   ```bash
+   npx cap sync
    ```
 
-3. **Certifique-se de que o Tailwind CSS está configurado** para ler as classes utilitárias e variáveis definidas no `src/index.css`.
+3. **Abrir no Android Studio / Xcode:**
+   ```bash
+   npx cap open android
+   # ou
+   npx cap open ios
+   ```
 
-## 🔌 Guia de Integração (Backend/App Existente)
+## 🔌 Configuração do Backend (Supabase)
 
-Para conectar este frontend ao seu aplicativo "pronto", siga estas diretrizes:
-
-### 1. Interface de Dados (Atletas)
-O componente `App.tsx` espera um array de atletas no seguinte formato:
-
-```typescript
-interface Athlete {
-  id: string;
-  name: string;
-  role: string;
-  hr: number;      // Frequência cardíaca atual
-  reps: number;    // Repetições totais (opcional)
-  image: string;   // URL da foto do atleta
-  progress: number; // 0 a 100 (porcentagem de conclusão do WOD)
-  hasWatch: boolean; // Define se o sistema deve tentar ler BPM
-}
+Crie um arquivo `.env.local` na raiz do projeto:
+```env
+VITE_SUPABASE_URL=sua_url_do_supabase
+VITE_SUPABASE_ANON_KEY=sua_chave_anon_do_supabase
 ```
-
-### 2. Conexão com API
-Substitua o estado inicial `INITIAL_ATHLETES` por uma chamada à sua API ou WebSocket para atualizações em tempo real:
-
-```tsx
-// Exemplo de integração via useEffect
-useEffect(() => {
-  const socket = new WebSocket('ws://seu-backend.com/live-wod');
-  socket.onmessage = (event) => {
-    const updatedAthletes = JSON.parse(event.data);
-    setAthletes(updatedAthletes);
-  };
-  return () => socket.close();
-}, []);
-```
-
-### 3. Persistência de Resultados
-A função `handleStartWod` gera um objeto `WodResult` quando o WOD é interrompido. Você deve enviar este objeto para o seu banco de dados:
-
-```typescript
-interface WodResult {
-  time: string;      // Tempo final formatado (ex: "18:42")
-  athletes: Athlete[]; // Lista final ordenada pelo progresso
-  date: string;      // Data e hora da conclusão
-}
-```
-
-## 🎨 Customização Visual
-
-Toda a identidade visual está concentrada no arquivo `src/index.css`. Você pode ajustar as cores neon e os efeitos de brilho alterando as variáveis no bloco `@theme`:
-
-- `--color-primary`: Cor principal (Verde Neon/Lime)
-- `--color-secondary`: Cor de destaque (Laranja/Alerta)
-- `--color-background`: Fundo escuro profundo
 
 ---
 Desenvolvido para **CrossCity Hub - CrossFit Elite**. 
-*Transformando dados em performance.*
+*Pronto para escalar e vender.*

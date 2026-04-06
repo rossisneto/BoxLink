@@ -1,5 +1,5 @@
 {
-  "name": "crosscity-hub",
-  "description": "A high-performance fitness dashboard for CrossFit boxes, featuring real-time WOD tracking, leaderboards, and athlete check-ins.",
-  "requestFramePermissions": []
+  "name": "CrossCity Hub",
+  "description": "Plataforma de academia/box gamificada com WOD, Desafios, Duelos, Ranking e Avatar.",
+  "requestFramePermissions": ["geolocation"]
 }
