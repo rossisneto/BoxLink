@@ -63,14 +63,22 @@ app.get("/api/tv-data", async (req, res) => {
   const { data: wod } = await getSupabase().from('wods').select('*').eq('date', today).single();
   
   const { data: checkins } = await getSupabase().from('checkins').select('*, profiles(name, avatar_equipped)').eq('date', today);
+  const { data: challenges } = await getSupabase().from('challenges').select('*').eq('active', true);
+  const { data: duels } = await getSupabase().from('duels').select('*, challenger:profiles!challenger_id(name), opponent:profiles!opponent_id(name)').eq('status', 'accepted');
+  const { data: rankings } = await getSupabase().from('profiles').select('name, xp, level').order('xp', { ascending: false }).limit(10);
   
   res.json({
-    settings: {
-      ...settings,
-      rewards: economy
-    },
-    wod,
-    checkins
+    settings: settings || { name: "CrossCity Hub", logo: "" },
+    rewards: economy,
+    wod: wod || { name: "WOD de Hoje", type: "AMRAP", warmup: "A definir", skill: "A definir", rx: "A definir", scaled: "A definir", beginner: "A definir" },
+    checkins: checkins || [],
+    challenges: challenges || [],
+    duels: (duels || []).map(d => ({
+      ...d,
+      challengerName: (d.challenger as any)?.name,
+      opponentName: (d.opponent as any)?.name
+    })),
+    rankings: rankings || []
   });
 });
 
@@ -343,6 +351,44 @@ app.get("/api/admin/users", async (req, res) => {
   res.json(data || []);
 });
 
+app.get("/api/profile/:userId", async (req, res) => {
+  const { userId } = req.params;
+  const { data, error } = await getSupabase().from('profiles').select('*').eq('id', userId).single();
+  if (error) return res.status(404).json({ message: "Perfil não encontrado" });
+  res.json(data);
+});
+
+app.post("/api/auth/login", async (req, res) => {
+  const { email, password } = req.body;
+  const { data, error } = await getSupabase().auth.signInWithPassword({ email, password });
+  if (error) return res.status(401).json({ message: error.message });
+  
+  const { data: profile } = await getSupabase().from('profiles').select('*').eq('id', data.user.id).single();
+  res.json(profile);
+});
+
+app.post("/api/auth/signup", async (req, res) => {
+  const { email, password, name } = req.body;
+  const { data, error } = await getSupabase().auth.signUp({ email, password });
+  if (error) return res.status(400).json({ message: error.message });
+  
+  if (data.user) {
+    const { error: profileError } = await getSupabase(true).from('profiles').insert({
+      id: data.user.id,
+      email,
+      name,
+      role: 'student',
+      status: 'pending',
+      xp: 0,
+      coins: 0,
+      level: 1
+    });
+    if (profileError) console.error('Error creating profile:', profileError);
+  }
+  
+  res.json({ success: true });
+});
+
 app.post("/api/admin/users/status", async (req, res) => {
   const { userId, status, role } = req.body;
   const update: any = { status };
@@ -385,23 +431,6 @@ app.get("/api/admin/duels", async (req, res) => {
 app.get("/api/admin/wods", async (req, res) => {
   const { data } = await getSupabase().from('wods').select('*').order('date', { ascending: false });
   res.json(data || []);
-});
-
-app.post("/api/admin/seed-items", async (req, res) => {
-  const items = [
-    { id: 'cap_red', name: 'Boné Vermelho', slot: 'head_accessory', price: 50, image: '🧢' },
-    { id: 'cap_blue', name: 'Boné Azul', slot: 'head_accessory', price: 50, image: '🧢' },
-    { id: 'shirt_black', name: 'Camiseta Preta', slot: 'top', price: 100, image: '👕' },
-    { id: 'shirt_white', name: 'Camiseta Branca', slot: 'top', price: 100, image: '👕' },
-    { id: 'shorts_black', name: 'Shorts Preto', slot: 'bottom', price: 80, image: '🩳' },
-    { id: 'shoes_running', name: 'Tênis de Corrida', slot: 'shoes', price: 150, image: '👟' }
-  ];
-  
-  for (const item of items) {
-    await getSupabase().from('items').upsert(item);
-  }
-  
-  res.json({ success: true });
 });
 
 async function startServer() {
