@@ -65,12 +65,19 @@ app.get("/api/tv-data", async (req, res) => {
   const { data: checkins } = await getSupabase().from('checkins').select('*, profiles(name, avatar_equipped)').eq('date', today);
   const { data: challenges } = await getSupabase().from('challenges').select('*').eq('active', true);
   const { data: duels } = await getSupabase().from('duels').select('*, challenger:profiles!challenger_id(name), opponent:profiles!opponent_id(name)').eq('status', 'accepted');
-  const { data: rankings } = await getSupabase().from('profiles').select('name, xp, level').order('xp', { ascending: false }).limit(10);
+  const { data: rankings } = await getSupabase().from('profiles').select('name, xp, level, avatar_equipped').order('xp', { ascending: false }).limit(10);
   
+  // Mocked stats for the ticker
+  const stats = {
+    frequency: "92% OPTIMAL",
+    newRecord: "JULIA M. (158 REPS)",
+    upcoming: "HYPERTROPHY STRENGTH"
+  };
+
   res.json({
     settings: settings || { name: "CrossCity Hub", logo: "" },
     rewards: economy,
-    wod: wod || { name: "WOD de Hoje", type: "AMRAP", warmup: "A definir", skill: "A definir", rx: "A definir", scaled: "A definir", beginner: "A definir" },
+    wod: wod || { name: "WOD de Hoje", type: "AMRAP", warmup: "400M RUN\n20 AIR SQUATS", skill: "SNATCH FOCUS\n5 x 3 @ 65% 1RM", rx: "A definir", scaled: "A definir", beginner: "A definir" },
     checkins: checkins || [],
     challenges: challenges || [],
     duels: (duels || []).map(d => ({
@@ -78,7 +85,8 @@ app.get("/api/tv-data", async (req, res) => {
       challengerName: (d.challenger as any)?.name,
       opponentName: (d.opponent as any)?.name
     })),
-    rankings: rankings || []
+    rankings: rankings || [],
+    stats
   });
 });
 
@@ -453,8 +461,4 @@ async function startServer() {
   });
 }
 
-if (process.env.NODE_ENV !== "production") {
-  startServer();
-}
-
-export default app;
+startServer();
