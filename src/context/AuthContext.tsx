@@ -83,38 +83,31 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const login = async (email: string, password: string) => {
+    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+    const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+    if (!supabaseUrl || !supabaseAnonKey) {
+      return { error: { message: 'Configuração de autenticação ausente. Verifique VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY.' } };
+    }
+
     try {
-      const response = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password })
-      });
-      
-      const data = await response.json();
-      
-      if (!response.ok) {
-        return { error: { message: data.message || 'Erro ao entrar' } };
-      }
-      
-      // Also sign in the supabase client to get the session for other things
       const { error: authError } = await supabase.auth.signInWithPassword({ email, password });
-      if (authError) return { error: authError };
-      
-      const mappedUser: User = {
-        ...data,
-        avatar: {
-          equipped: data.avatar_equipped,
-          inventory: data.avatar_inventory
-        },
-        checkins: data.checkins || [],
-        paidBonuses: data.paid_bonuses || []
-      };
-      
-      setUser(mappedUser);
+      if (authError) {
+        const invalidCredentialsMessages = [
+          'Invalid login credentials',
+          'Email not confirmed',
+          'Invalid email or password'
+        ];
+        const isInvalidCredentials = invalidCredentialsMessages.some(msg => authError.message?.includes(msg));
+        if (isInvalidCredentials) {
+          return { error: { message: 'Credenciais inválidas' } };
+        }
+        return { error: { message: authError.message || 'Erro ao autenticar' } };
+      }
+
       return { error: null };
     } catch (error: any) {
       console.error('Login error:', error);
-      return { error: { message: 'Erro ao conectar com o servidor' } };
+      return { error: { message: 'Falha de rede ao autenticar. Tente novamente.' } };
     }
   };
 
