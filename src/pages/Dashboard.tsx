@@ -7,6 +7,8 @@ import { Wod, User } from '../types';
 import confetti from 'canvas-confetti';
 import AvatarPreview from '../components/AvatarPreview';
 
+const getFirstWord = (value?: string | null, fallback = 'ATLETA') => value?.trim()?.split(/\s+/)[0] || fallback;
+
 export default function Dashboard() {
   const { user, updateUser } = useAuth();
   const [wod, setWod] = useState<Wod | null>(null);
@@ -106,7 +108,7 @@ export default function Dashboard() {
           <AvatarPreview equipped={user?.avatar.equipped!} size="sm" className="border-2" />
           <div>
             <h1 className="text-2xl font-headline font-black text-on-surface tracking-tight uppercase italic leading-none">
-              OLÁ, <span className="text-primary">{user?.name.split(' ')[0]}</span>
+              OLÁ, <span className="text-primary">{getFirstWord(user?.name)}</span>
             </h1>
             <p className="text-on-surface-variant text-[10px] font-bold tracking-widest uppercase mt-1 italic">Pronto para o treino?</p>
           </div>
@@ -162,7 +164,7 @@ export default function Dashboard() {
                 >
                   <span className="text-sm font-headline font-black">{s.time}</span>
                   <span className={cn("text-[8px] font-bold uppercase tracking-tighter", selectedClass === s.time ? "text-background/60" : "text-on-surface-variant")}>
-                    {s.coach.split(' ')[0]}
+                    {getFirstWord(s.coach, 'COACH')}
                   </span>
                 </button>
               ))}
