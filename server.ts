@@ -28,28 +28,18 @@ const getSupabase = (useServiceRole = false) => {
   return createClient(supabaseUrl, useServiceRole ? supabaseServiceKey : supabaseKey);
 };
 
-// Helper to add rewards
-async function addReward(userId: string, type: string, xp: number, coins: number, description: string) {
-  const { data: profile } = await getSupabase(true).from('profiles').select('xp, coins, level').eq('id', userId).single();
-  if (!profile) return null;
+async function fetchUserCheckins(userId: string) {
+  const { data } = await getSupabase(true)
+    .from('checkins')
+    .select('date, timestamp, class_time')
+    .eq('user_id', userId)
+    .order('timestamp', { ascending: false });
 
-  const newXp = (profile.xp || 0) + xp;
-  const newCoins = (profile.coins || 0) + coins;
-  
-  // Simple level up logic
-  const xpToNextLevel = profile.level * 100;
-  let newLevel = profile.level;
-  let levelUp = false;
-  
-  if (newXp >= xpToNextLevel) {
-    newLevel += 1;
-    levelUp = true;
-  }
-
-  await getSupabase(true).from('profiles').update({ xp: newXp, coins: newCoins, level: newLevel }).eq('id', userId);
-  await getSupabase(true).from('reward_history').insert({ user_id: userId, type, xp, coins, description });
-  
-  return { levelUp };
+  return (data || []).map((checkin: any) => ({
+    date: checkin.date,
+    timestamp: checkin.timestamp,
+    classTime: checkin.class_time ?? null,
+  }));
 }
 
 // API Routes
@@ -67,11 +57,32 @@ app.get("/api/tv-data", async (req, res) => {
   const { data: duels } = await getSupabase().from('duels').select('*, challenger:profiles!challenger_id(name), opponent:profiles!opponent_id(name)').eq('status', 'accepted');
   const { data: rankings } = await getSupabase().from('profiles').select('name, xp, level, avatar_equipped').order('xp', { ascending: false }).limit(10);
   
-  // Mocked stats for the ticker
+  const { data: approvedUsers } = await getSupabase().from('profiles').select('id').eq('status', 'approved');
+  const approvedCount = approvedUsers?.length || 0;
+  const checkinCount = checkins?.length || 0;
+  const frequencyPct = approvedCount > 0 ? Math.round((checkinCount / approvedCount) * 100) : 0;
+
+  const { data: latestResult } = await getSupabase()
+    .from('wod_results')
+    .select('result, profiles(name), created_at')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .single();
+
+  const nowTime = formatInTimeZone(new Date(), TIMEZONE, "HH:mm");
+  const { data: upcomingClass } = await getSupabase()
+    .from('schedule')
+    .select('time, coach')
+    .eq('is_active', true)
+    .gte('time', nowTime)
+    .order('time', { ascending: true })
+    .limit(1)
+    .single();
+
   const stats = {
-    frequency: "92% OPTIMAL",
-    newRecord: "JULIA M. (158 REPS)",
-    upcoming: "HYPERTROPHY STRENGTH"
+    frequency: `${frequencyPct}% FREQUÊNCIA`,
+    newRecord: latestResult ? `${(latestResult as any).profiles?.name || 'Atleta'} (${latestResult.result})` : "SEM RESULTADOS",
+    upcoming: upcomingClass ? `${upcomingClass.time} • ${upcomingClass.coach}` : "SEM PRÓXIMA AULA"
   };
 
   res.json({
@@ -98,6 +109,95 @@ app.get("/api/schedule", async (req, res) => {
 app.get("/api/wods", async (req, res) => {
   const { data } = await getSupabase().from('wods').select('*').order('date', { ascending: false });
   res.json(data || []);
+});
+
+app.get("/api/wods/results/:wodId", async (req, res) => {
+  const { wodId } = req.params;
+  const { data, error } = await getSupabase()
+    .from('wod_results')
+    .select('*, profiles(name)')
+    .eq('wod_id', wodId)
+    .order('created_at', { ascending: false });
+
+  if (error) return res.status(400).json({ message: error.message });
+  res.json(data || []);
+});
+
+app.post("/api/wods/results", async (req, res) => {
+  const { userId, wodId, result, type } = req.body;
+  if (!userId || !wodId || !result) return res.status(400).json({ message: "Dados incompletos" });
+
+  const { data, error } = await getSupabase()
+    .from('wod_results')
+    .insert({
+      user_id: userId,
+      wod_id: wodId,
+      result,
+      type: type || 'RX',
+    })
+    .select()
+    .single();
+
+  if (error) return res.status(400).json({ message: error.message });
+  res.json(data);
+});
+
+app.get("/api/rankings", async (_req, res) => {
+  const { data: xpRank, error: xpError } = await getSupabase()
+    .from('profiles')
+    .select('id, name, email, role, status, xp, coins, level, avatar_equipped, avatar_inventory, paid_bonuses, created_at')
+    .eq('status', 'approved')
+    .order('xp', { ascending: false });
+
+  if (xpError) return res.status(400).json({ message: xpError.message });
+
+  const currentMonthStart = formatInTimeZone(new Date(), TIMEZONE, "yyyy-MM-01");
+  const { data: monthCheckins } = await getSupabase()
+    .from('checkins')
+    .select('user_id')
+    .gte('date', currentMonthStart);
+
+  const freqMap = new Map<string, number>();
+  (monthCheckins || []).forEach((checkin: any) => {
+    freqMap.set(checkin.user_id, (freqMap.get(checkin.user_id) || 0) + 1);
+  });
+
+  const mappedUsers = (xpRank || []).map((profile: any) => ({
+    ...profile,
+    avatar: {
+      equipped: profile.avatar_equipped,
+      inventory: profile.avatar_inventory || [],
+    },
+    checkins: [],
+    paidBonuses: profile.paid_bonuses || [],
+    createdAt: profile.created_at,
+    monthCheckinCount: freqMap.get(profile.id) || 0,
+  }));
+
+  const freqRank = [...mappedUsers].sort((a, b) => (b.monthCheckinCount || 0) - (a.monthCheckinCount || 0));
+  res.json({ xpRank: mappedUsers, freqRank });
+});
+
+app.post("/api/checkin", async (req, res) => {
+  const { userId, classTime } = req.body;
+  if (!userId) return res.status(400).json({ message: "userId é obrigatório" });
+
+  const { data, error } = await getSupabase(true).rpc('perform_daily_checkin', {
+    p_user_id: userId,
+    p_class_time: classTime || null,
+    p_timezone: TIMEZONE,
+  });
+
+  if (error) return res.status(400).json({ message: error.message });
+  if (!data?.success) return res.status(400).json({ message: data?.message || "Não foi possível realizar check-in" });
+
+  res.json({
+    success: true,
+    message: data.message,
+    xp: data.xp_awarded || 0,
+    coins: data.coins_awarded || 0,
+    levelUp: data.level_up || false,
+  });
 });
 
 app.post("/api/wods", async (req, res) => {
@@ -188,21 +288,24 @@ app.post("/api/challenges", async (req, res) => {
 
 app.post("/api/challenges/complete", async (req, res) => {
   const { userId, challengeId } = req.body;
-  const { data: challenge } = await getSupabase().from('challenges').select('*').eq('id', challengeId).single();
-  if (!challenge) return res.status(404).json({ message: "Desafio não encontrado" });
-  
-  const { data: economy } = await getSupabase().from('avatar_economy_settings').select('*').eq('is_active', true).single();
-  
-  let xp = challenge.xp;
-  let coins = challenge.coins;
-  
-  if (challenge.difficulty && economy) {
-    xp = economy[`challenge_${challenge.difficulty}_xp`] || xp;
-    coins = economy[`challenge_${challenge.difficulty}_coins`] || coins;
-  }
-  
-  const result = await addReward(userId, 'challenge', xp, coins, `Desafio concluído: ${challenge.title}`);
-  res.json({ success: true, xp, coins, levelUp: result?.levelUp });
+  if (!userId || !challengeId) return res.status(400).json({ message: "Dados incompletos" });
+
+  const { data, error } = await getSupabase(true).rpc('claim_challenge_reward', {
+    p_user_id: userId,
+    p_challenge_id: challengeId,
+    p_timezone: TIMEZONE,
+  });
+
+  if (error) return res.status(400).json({ message: error.message });
+  if (!data?.success) return res.status(400).json({ message: data?.message || "Não foi possível resgatar recompensa" });
+
+  res.json({
+    success: true,
+    message: data.message,
+    xp: data.xp_awarded || 0,
+    coins: data.coins_awarded || 0,
+    levelUp: data.level_up || false,
+  });
 });
 
 app.post("/api/duels", async (req, res) => {
@@ -244,23 +347,24 @@ app.get("/api/duels/history/:userId", async (req, res) => {
 
 app.post("/api/duels/finish", async (req, res) => {
   const { duelId, winnerId } = req.body;
-  const { data: duel } = await getSupabase().from('duels').select('*').eq('id', duelId).single();
-  if (!duel) return res.status(404).json({ message: "Duelo não encontrado" });
-  
-  await getSupabase().from('duels').update({ status: 'finished', winner_id: winnerId }).eq('id', duelId);
-  
-  const { data: economy } = await getSupabase().from('avatar_economy_settings').select('*').eq('is_active', true).single();
-  
-  const award = async (userId: string, isWinner: boolean) => {
-    const xp = isWinner ? (economy?.duel_win_xp || 40) : (economy?.duel_loss_xp || 15);
-    const coins = isWinner ? (economy?.duel_win_coins || 10) : 0;
-    await addReward(userId, 'duel', xp, coins, isWinner ? "Vitória em duelo" : "Participação em duelo");
-  };
-  
-  await award(duel.challenger_id, duel.challenger_id === winnerId);
-  await award(duel.opponent_id, duel.opponent_id === winnerId);
-  
-  res.json({ success: true });
+  if (!duelId || !winnerId) return res.status(400).json({ message: "Dados incompletos" });
+
+  const { data, error } = await getSupabase(true).rpc('settle_duel_idempotent', {
+    p_duel_id: duelId,
+    p_winner_id: winnerId,
+    p_timezone: TIMEZONE,
+  });
+
+  if (error) return res.status(400).json({ message: error.message });
+  if (!data?.success) return res.status(400).json({ message: data?.message || "Não foi possível finalizar duelo" });
+
+  res.json({
+    success: true,
+    message: data.message,
+    winnerReward: data.winner_reward || null,
+    loserReward: data.loser_reward || null,
+    alreadyProcessed: data.already_processed || false,
+  });
 });
 
 app.post("/api/admin/schedule", async (req, res) => {
@@ -363,7 +467,8 @@ app.get("/api/profile/:userId", async (req, res) => {
   const { userId } = req.params;
   const { data, error } = await getSupabase().from('profiles').select('*').eq('id', userId).single();
   if (error) return res.status(404).json({ message: "Perfil não encontrado" });
-  res.json(data);
+  const checkins = await fetchUserCheckins(userId);
+  res.json({ ...data, checkins });
 });
 
 app.post("/api/auth/login", async (req, res) => {
@@ -385,7 +490,7 @@ app.post("/api/auth/signup", async (req, res) => {
       id: data.user.id,
       email,
       name,
-      role: 'student',
+      role: 'athlete',
       status: 'pending',
       xp: 0,
       coins: 0,
@@ -411,6 +516,64 @@ app.post("/api/admin/users/status", async (req, res) => {
 app.get("/api/admin/items", async (req, res) => {
   const { data } = await getSupabase().from('items').select('*').order('created_at', { ascending: false });
   res.json(data || []);
+});
+
+app.get("/api/items", async (_req, res) => {
+  const { data, error } = await getSupabase().from('items').select('*').order('created_at', { ascending: false });
+  if (error) return res.status(400).json({ message: error.message });
+  res.json(data || []);
+});
+
+app.post("/api/shop/buy", async (req, res) => {
+  const { userId, itemId } = req.body;
+  if (!userId || !itemId) return res.status(400).json({ message: "Dados incompletos" });
+
+  const { data: profile, error: profileError } = await getSupabase(true)
+    .from('profiles')
+    .select('coins, avatar_inventory')
+    .eq('id', userId)
+    .single();
+  if (profileError || !profile) return res.status(404).json({ message: "Usuário não encontrado" });
+
+  const { data: item, error: itemError } = await getSupabase().from('items').select('*').eq('id', itemId).single();
+  if (itemError || !item) return res.status(404).json({ message: "Item não encontrado" });
+
+  const inventory: string[] = profile.avatar_inventory || [];
+  if (inventory.includes(itemId)) return res.json({ success: true, coins: profile.coins, inventory });
+  if ((profile.coins || 0) < item.price) return res.status(400).json({ message: "Saldo insuficiente" });
+
+  const updatedCoins = profile.coins - item.price;
+  const updatedInventory = [...inventory, itemId];
+
+  const { error: updateError } = await getSupabase(true).from('profiles').update({
+    coins: updatedCoins,
+    avatar_inventory: updatedInventory,
+  }).eq('id', userId);
+
+  if (updateError) return res.status(400).json({ message: updateError.message });
+  res.json({ success: true, coins: updatedCoins, inventory: updatedInventory });
+});
+
+app.post("/api/avatar/equip", async (req, res) => {
+  const { userId, itemId, slot } = req.body;
+  if (!userId || !slot) return res.status(400).json({ message: "Dados incompletos" });
+
+  const { data: profile, error: profileError } = await getSupabase(true)
+    .from('profiles')
+    .select('avatar_equipped, avatar_inventory')
+    .eq('id', userId)
+    .single();
+  if (profileError || !profile) return res.status(404).json({ message: "Usuário não encontrado" });
+
+  const equipped = profile.avatar_equipped || {};
+  const inventory: string[] = profile.avatar_inventory || [];
+  if (itemId && !inventory.includes(itemId)) return res.status(400).json({ message: "Item não está no inventário" });
+
+  equipped[slot] = itemId || null;
+  const { error: updateError } = await getSupabase(true).from('profiles').update({ avatar_equipped: equipped }).eq('id', userId);
+  if (updateError) return res.status(400).json({ message: updateError.message });
+
+  res.json({ success: true, equipped });
 });
 
 app.post("/api/admin/items", async (req, res) => {
