@@ -43,26 +43,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const fetchUserProfile = async (userId: string) => {
     try {
-      const response = await fetch(`/api/profile/${userId}`);
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        console.error('Profile fetch failed:', response.status, errorData);
-        
-        if (response.status === 404) {
-          console.warn('Profile not found for user:', userId);
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', userId)
+        .single();
+
+      if (error) {
+        console.error('Profile fetch failed:', error);
+        if (error.code === 'PGRST116') { // Not found
           await supabase.auth.signOut();
           setUser(null);
-          return;
         }
-        
-        // If it's not a 404, we might want to retry or just show an error
-        throw new Error(errorData.message || 'Erro ao carregar perfil');
+        return;
       }
-      
-      const data = await response.json().catch(err => {
-        console.error('JSON parse error:', err);
-        throw new Error('Resposta do servidor inválida');
-      });
       
       const mappedUser: User = {
         ...data,
@@ -113,22 +107,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const signup = async (email: string, password: string, name: string) => {
     try {
-      const response = await fetch('/api/auth/signup', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password, name })
-      });
-      
-      const data = await response.json();
-      
-      if (!response.ok) {
-        return { error: { message: data.message || 'Erro ao cadastrar' } };
+      const { data, error: authError } = await supabase.auth.signUp({ email, password });
+      if (authError) return { error: authError };
+
+      if (data.user) {
+        const { error: profileError } = await supabase.from('profiles').insert({
+          id: data.user.id,
+          email,
+          name,
+          role: 'athlete',
+          status: 'pending',
+          xp: 0,
+          coins: 0,
+          level: 1
+        });
+        if (profileError) {
+          console.error('Error creating profile:', profileError);
+          return { error: profileError };
+        }
       }
       
       return { error: null };
     } catch (error: any) {
       console.error('Signup error:', error);
-      return { error: { message: 'Erro ao conectar com o servidor' } };
+      return { error: { message: 'Erro ao realizar cadastro' } };
     }
   };
 
