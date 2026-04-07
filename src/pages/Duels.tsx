@@ -7,7 +7,7 @@ import { useAuth } from '../context/AuthContext';
 import confetti from 'canvas-confetti';
 
 export default function Duels() {
-  const { user, login } = useAuth();
+  const { user, updateUser } = useAuth();
   const [duels, setDuels] = useState<Duel[]>([]);
   const [history, setHistory] = useState<any[]>([]);
   const [users, setUsers] = useState<User[]>([]);
@@ -83,19 +83,25 @@ export default function Duels() {
       });
       if (res.ok) {
         const isWinner = user.id === winnerId;
-        const xp = isWinner ? 40 : 15;
-        const coins = isWinner ? 10 : 0;
         
         confetti({ particleCount: 100, spread: 70, origin: { y: 0.6 } });
-        
-        // Update local user state
-        const updatedUser = { 
-          ...user, 
-          xp: user.xp + xp, 
-          coins: user.coins + coins 
-        };
-        login(updatedUser as User);
-        alert(isWinner ? `Parabéns! Você venceu o duelo! +${xp} XP e +${coins} BrazaCoins!` : `Duelo finalizado! Você ganhou +${xp} XP pela participação.`);
+
+        // Refresh user from persisted backend state (single source of truth)
+        const profileRes = await fetch(`/api/profile/${user.id}`);
+        if (profileRes.ok) {
+          const data = await profileRes.json();
+          updateUser({
+            ...data,
+            avatar: {
+              equipped: data.avatar_equipped,
+              inventory: data.avatar_inventory || []
+            },
+            checkins: data.checkins || [],
+            paidBonuses: data.paid_bonuses || []
+          } as User);
+        }
+
+        alert(isWinner ? `Parabéns! Você venceu o duelo!` : `Duelo finalizado! Obrigado por participar.`);
         
         // Refresh duels
         fetch('/api/tv-data').then(res => res.json()).then(data => setDuels(data.duels));

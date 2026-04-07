@@ -28,28 +28,18 @@ const getSupabase = (useServiceRole = false) => {
   return createClient(supabaseUrl, useServiceRole ? supabaseServiceKey : supabaseKey);
 };
 
-// Helper to add rewards
-async function addReward(userId: string, type: string, xp: number, coins: number, description: string) {
-  const { data: profile } = await getSupabase(true).from('profiles').select('xp, coins, level').eq('id', userId).single();
-  if (!profile) return null;
+async function fetchUserCheckins(userId: string) {
+  const { data } = await getSupabase(true)
+    .from('checkins')
+    .select('date, timestamp, class_time')
+    .eq('user_id', userId)
+    .order('timestamp', { ascending: false });
 
-  const newXp = (profile.xp || 0) + xp;
-  const newCoins = (profile.coins || 0) + coins;
-  
-  // Simple level up logic
-  const xpToNextLevel = profile.level * 100;
-  let newLevel = profile.level;
-  let levelUp = false;
-  
-  if (newXp >= xpToNextLevel) {
-    newLevel += 1;
-    levelUp = true;
-  }
-
-  await getSupabase(true).from('profiles').update({ xp: newXp, coins: newCoins, level: newLevel }).eq('id', userId);
-  await getSupabase(true).from('reward_history').insert({ user_id: userId, type, xp, coins, description });
-  
-  return { levelUp };
+  return (data || []).map((checkin: any) => ({
+    date: checkin.date,
+    timestamp: checkin.timestamp,
+    classTime: checkin.class_time ?? null,
+  }));
 }
 
 async function fetchUserCheckins(userId: string) {
@@ -81,11 +71,32 @@ app.get("/api/tv-data", async (req, res) => {
   const { data: duels } = await getSupabase().from('duels').select('*, challenger:profiles!challenger_id(name), opponent:profiles!opponent_id(name)').eq('status', 'accepted');
   const { data: rankings } = await getSupabase().from('profiles').select('name, xp, level, avatar_equipped').order('xp', { ascending: false }).limit(10);
   
-  // Mocked stats for the ticker
+  const { data: approvedUsers } = await getSupabase().from('profiles').select('id').eq('status', 'approved');
+  const approvedCount = approvedUsers?.length || 0;
+  const checkinCount = checkins?.length || 0;
+  const frequencyPct = approvedCount > 0 ? Math.round((checkinCount / approvedCount) * 100) : 0;
+
+  const { data: latestResult } = await getSupabase()
+    .from('wod_results')
+    .select('result, profiles(name), created_at')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .single();
+
+  const nowTime = formatInTimeZone(new Date(), TIMEZONE, "HH:mm");
+  const { data: upcomingClass } = await getSupabase()
+    .from('schedule')
+    .select('time, coach')
+    .eq('is_active', true)
+    .gte('time', nowTime)
+    .order('time', { ascending: true })
+    .limit(1)
+    .single();
+
   const stats = {
-    frequency: "92% OPTIMAL",
-    newRecord: "JULIA M. (158 REPS)",
-    upcoming: "HYPERTROPHY STRENGTH"
+    frequency: `${frequencyPct}% FREQUÊNCIA`,
+    newRecord: latestResult ? `${(latestResult as any).profiles?.name || 'Atleta'} (${latestResult.result})` : "SEM RESULTADOS",
+    upcoming: upcomingClass ? `${upcomingClass.time} • ${upcomingClass.coach}` : "SEM PRÓXIMA AULA"
   };
 
   res.json({
@@ -350,23 +361,24 @@ app.get("/api/duels/history/:userId", async (req, res) => {
 
 app.post("/api/duels/finish", async (req, res) => {
   const { duelId, winnerId } = req.body;
-  const { data: duel } = await getSupabase().from('duels').select('*').eq('id', duelId).single();
-  if (!duel) return res.status(404).json({ message: "Duelo não encontrado" });
-  
-  await getSupabase().from('duels').update({ status: 'finished', winner_id: winnerId }).eq('id', duelId);
-  
-  const { data: economy } = await getSupabase().from('avatar_economy_settings').select('*').eq('is_active', true).single();
-  
-  const award = async (userId: string, isWinner: boolean) => {
-    const xp = isWinner ? (economy?.duel_win_xp || 40) : (economy?.duel_loss_xp || 15);
-    const coins = isWinner ? (economy?.duel_win_coins || 10) : 0;
-    await addReward(userId, 'duel', xp, coins, isWinner ? "Vitória em duelo" : "Participação em duelo");
-  };
-  
-  await award(duel.challenger_id, duel.challenger_id === winnerId);
-  await award(duel.opponent_id, duel.opponent_id === winnerId);
-  
-  res.json({ success: true });
+  if (!duelId || !winnerId) return res.status(400).json({ message: "Dados incompletos" });
+
+  const { data, error } = await getSupabase(true).rpc('settle_duel_idempotent', {
+    p_duel_id: duelId,
+    p_winner_id: winnerId,
+    p_timezone: TIMEZONE,
+  });
+
+  if (error) return res.status(400).json({ message: error.message });
+  if (!data?.success) return res.status(400).json({ message: data?.message || "Não foi possível finalizar duelo" });
+
+  res.json({
+    success: true,
+    message: data.message,
+    winnerReward: data.winner_reward || null,
+    loserReward: data.loser_reward || null,
+    alreadyProcessed: data.already_processed || false,
+  });
 });
 
 app.post("/api/admin/schedule", async (req, res) => {
