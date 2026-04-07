@@ -7,6 +7,30 @@ import { supabase } from '../lib/supabase';
 import { cn } from '../lib/utils';
 import AvatarPreview from '../components/AvatarPreview';
 
+const fallbackTvData = {
+  wod: {
+    id: 'fallback-wod',
+    date: new Date().toISOString().split('T')[0],
+    type: 'FOR TIME',
+    name: 'Sem dados do servidor',
+    warmup: 'Mobilidade geral\nAtivação de core',
+    skill: 'Técnica do dia\nAguardando sincronização',
+    rx: 'Aguardando',
+    scaled: 'Aguardando',
+  },
+  checkins: [],
+  settings: {
+    name: 'CrossCity Hub',
+    logo: '',
+  },
+  rankings: [],
+  stats: {
+    totalAthletes: 0,
+    weeklyCheckins: 0,
+  },
+  duels: [],
+};
+
 export default function TV() {
   const [data, setData] = useState<any>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -16,8 +40,12 @@ export default function TV() {
 
   const fetchData = () => {
     fetch('/api/tv-data')
-      .then(res => res.json())
-      .then(setData);
+      .then(res => {
+        if (!res.ok) throw new Error(`tv-data status ${res.status}`);
+        return res.json();
+      })
+      .then(setData)
+      .catch(() => setData(fallbackTvData));
   };
 
   useEffect(() => {
@@ -69,7 +97,7 @@ export default function TV() {
 
   const { wod, checkins, settings, rankings, stats, duels } = data;
   const currentAthlete = rankings?.[athleteIndex];
-  const nextAthlete = rankings?.[(athleteIndex + 1) % rankings.length];
+  const nextAthlete = rankings?.length ? rankings[(athleteIndex + 1) % rankings.length] : null;
 
   return (
     <div className="min-h-screen bg-black text-white font-sans overflow-hidden flex flex-col p-6 gap-6 relative select-none">
