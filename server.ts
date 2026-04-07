@@ -1,4 +1,4 @@
-import express from "express";
+import express, { type NextFunction, type Request, type Response } from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -28,19 +28,49 @@ const getSupabase = (useServiceRole = false) => {
   return createClient(supabaseUrl, useServiceRole ? supabaseServiceKey : supabaseKey);
 };
 
-async function fetchUserCheckins(userId: string) {
-  const { data } = await getSupabase(true)
-    .from('checkins')
-    .select('date, timestamp, class_time')
-    .eq('user_id', userId)
-    .order('timestamp', { ascending: false });
+type AuthenticatedRequest = Request & {
+  authUserId?: string;
+  authRole?: string;
+};
 
-  return (data || []).map((checkin: any) => ({
-    date: checkin.date,
-    timestamp: checkin.timestamp,
-    classTime: checkin.class_time ?? null,
-  }));
-}
+const requireAuth = async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  const authHeader = req.headers.authorization || '';
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+  if (!token) return res.status(401).json({ message: "Token ausente" });
+
+  const { data, error } = await getSupabase().auth.getUser(token);
+  if (error || !data?.user) return res.status(401).json({ message: "Token inválido" });
+
+  req.authUserId = data.user.id;
+
+  const { data: profile } = await getSupabase(true)
+    .from('profiles')
+    .select('role')
+    .eq('id', data.user.id)
+    .maybeSingle();
+  req.authRole = profile?.role || 'athlete';
+
+  next();
+};
+
+const requireAdmin = (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  if (req.authRole !== 'admin') return res.status(403).json({ message: "Acesso restrito ao admin" });
+  next();
+};
+
+const requireCoachOrAdmin = (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  if (req.authRole !== 'admin' && req.authRole !== 'coach') {
+    return res.status(403).json({ message: "Acesso restrito a coach/admin" });
+  }
+  next();
+};
+
+const assertSelfOrAdmin = (req: AuthenticatedRequest, res: Response, targetUserId: string) => {
+  if (req.authRole === 'admin') return true;
+  if (req.authUserId === targetUserId) return true;
+  res.status(403).json({ message: "Operação não permitida para outro usuário" });
+  return false;
+};
 
 async function fetchUserCheckins(userId: string) {
   const { data } = await getSupabase(true)
@@ -69,7 +99,7 @@ app.get("/api/tv-data", async (req, res) => {
   const { data: checkins } = await getSupabase().from('checkins').select('*, profiles(name, avatar_equipped)').eq('date', today);
   const { data: challenges } = await getSupabase().from('challenges').select('*').eq('active', true);
   const { data: duels } = await getSupabase().from('duels').select('*, challenger:profiles!challenger_id(name), opponent:profiles!opponent_id(name)').eq('status', 'accepted');
-  const { data: rankings } = await getSupabase().from('profiles').select('name, xp, level, avatar_equipped').order('xp', { ascending: false }).limit(10);
+  const { data: rankings } = await getSupabase().rpc('get_general_xp_ranking', { p_limit: 10 });
   
   const { data: approvedUsers } = await getSupabase().from('profiles').select('id').eq('status', 'approved');
   const approvedCount = approvedUsers?.length || 0;
@@ -83,15 +113,10 @@ app.get("/api/tv-data", async (req, res) => {
     .limit(1)
     .single();
 
-  const nowTime = formatInTimeZone(new Date(), TIMEZONE, "HH:mm");
-  const { data: upcomingClass } = await getSupabase()
-    .from('schedule')
-    .select('time, coach')
-    .eq('is_active', true)
-    .gte('time', nowTime)
-    .order('time', { ascending: true })
-    .limit(1)
-    .single();
+  const { data: classWindow } = await getSupabase().rpc('get_current_class_window', {
+    p_timezone: TIMEZONE,
+  });
+  const upcomingClass = classWindow?.next_class ?? null;
 
   const stats = {
     frequency: `${frequencyPct}% FREQUÊNCIA`,
@@ -137,8 +162,9 @@ app.get("/api/wods/results/:wodId", async (req, res) => {
   res.json(data || []);
 });
 
-app.post("/api/wods/results", async (req, res) => {
-  const { userId, wodId, result, type } = req.body;
+app.post("/api/wods/results", requireAuth, async (req: AuthenticatedRequest, res) => {
+  const { wodId, result, type } = req.body;
+  const userId = req.authUserId!;
   if (!userId || !wodId || !result) return res.status(400).json({ message: "Dados incompletos" });
 
   const { data, error } = await getSupabase()
@@ -157,43 +183,33 @@ app.post("/api/wods/results", async (req, res) => {
 });
 
 app.get("/api/rankings", async (_req, res) => {
-  const { data: xpRank, error: xpError } = await getSupabase()
-    .from('profiles')
-    .select('id, name, email, role, status, xp, coins, level, avatar_equipped, avatar_inventory, paid_bonuses, created_at')
-    .eq('status', 'approved')
-    .order('xp', { ascending: false });
+  const { data: xpRank, error: xpError } = await getSupabase().rpc('get_general_xp_ranking', { p_limit: 200 });
 
   if (xpError) return res.status(400).json({ message: xpError.message });
 
-  const currentMonthStart = formatInTimeZone(new Date(), TIMEZONE, "yyyy-MM-01");
-  const { data: monthCheckins } = await getSupabase()
-    .from('checkins')
-    .select('user_id')
-    .gte('date', currentMonthStart);
+  const { data: freqRankRaw, error: freqError } = await getSupabase().rpc('get_monthly_frequency_ranking', {
+    p_limit: 200,
+    p_timezone: TIMEZONE,
+  });
+  if (freqError) return res.status(400).json({ message: freqError.message });
 
   const freqMap = new Map<string, number>();
-  (monthCheckins || []).forEach((checkin: any) => {
-    freqMap.set(checkin.user_id, (freqMap.get(checkin.user_id) || 0) + 1);
-  });
+  (freqRankRaw || []).forEach((row: any) => freqMap.set(row.id, row.month_checkin_count || 0));
 
   const mappedUsers = (xpRank || []).map((profile: any) => ({
     ...profile,
-    avatar: {
-      equipped: profile.avatar_equipped,
-      inventory: profile.avatar_inventory || [],
-    },
-    checkins: [],
-    paidBonuses: profile.paid_bonuses || [],
-    createdAt: profile.created_at,
     monthCheckinCount: freqMap.get(profile.id) || 0,
   }));
 
-  const freqRank = [...mappedUsers].sort((a, b) => (b.monthCheckinCount || 0) - (a.monthCheckinCount || 0));
+  const freqRank = [...mappedUsers].sort((a, b) =>
+    (b.monthCheckinCount || 0) - (a.monthCheckinCount || 0) || (b.xp || 0) - (a.xp || 0)
+  );
   res.json({ xpRank: mappedUsers, freqRank });
 });
 
-app.post("/api/checkin", async (req, res) => {
-  const { userId, classTime } = req.body;
+app.post("/api/checkin", requireAuth, async (req: AuthenticatedRequest, res) => {
+  const { classTime } = req.body;
+  const userId = req.authUserId!;
   if (!userId) return res.status(400).json({ message: "userId é obrigatório" });
 
   const { data, error } = await getSupabase(true).rpc('perform_daily_checkin', {
@@ -214,7 +230,7 @@ app.post("/api/checkin", async (req, res) => {
   });
 });
 
-app.post("/api/wods", async (req, res) => {
+app.post("/api/wods", requireAuth, requireCoachOrAdmin, async (req, res) => {
   const { date, name, type, warmup, skill, rx, scaled, beginner } = req.body;
   const { data, error } = await getSupabase().from('wods').insert({
     date, name, type, warmup, skill, rx, scaled, beginner
@@ -224,7 +240,7 @@ app.post("/api/wods", async (req, res) => {
   res.json(data);
 });
 
-app.get("/api/coach/results", async (req, res) => {
+app.get("/api/coach/results", requireAuth, requireCoachOrAdmin, async (req, res) => {
   const today = formatInTimeZone(new Date(), TIMEZONE, "yyyy-MM-dd");
   const { data: wods } = await getSupabase().from('wods').select('id').eq('date', today);
   if (!wods || wods.length === 0) return res.json([]);
@@ -238,7 +254,7 @@ app.get("/api/coach/results", async (req, res) => {
   res.json(data || []);
 });
 
-app.get("/api/coach/athletes", async (req, res) => {
+app.get("/api/coach/athletes", requireAuth, requireCoachOrAdmin, async (req, res) => {
   const today = formatInTimeZone(new Date(), TIMEZONE, "yyyy-MM-dd");
   const { data, error } = await getSupabase()
     .from('checkins')
@@ -249,8 +265,9 @@ app.get("/api/coach/athletes", async (req, res) => {
   res.json(data || []);
 });
 
-app.get("/api/user/wod-history/:userId", async (req, res) => {
+app.get("/api/user/wod-history/:userId", requireAuth, async (req: AuthenticatedRequest, res) => {
   const { userId } = req.params;
+  if (!assertSelfOrAdmin(req, res, userId)) return;
   const { data } = await getSupabase()
     .from('wod_results')
     .select('*, wods(*)')
@@ -259,20 +276,23 @@ app.get("/api/user/wod-history/:userId", async (req, res) => {
   res.json(data || []);
 });
 
-app.get("/api/user/history/:userId", async (req, res) => {
+app.get("/api/user/history/:userId", requireAuth, async (req: AuthenticatedRequest, res) => {
   const { userId } = req.params;
+  if (!assertSelfOrAdmin(req, res, userId)) return;
   const { data } = await getSupabase().from('reward_history').select('*').eq('user_id', userId).order('created_at', { ascending: false });
   res.json(data || []);
 });
 
-app.get("/api/user/prs/:userId", async (req, res) => {
+app.get("/api/user/prs/:userId", requireAuth, async (req: AuthenticatedRequest, res) => {
   const { userId } = req.params;
+  if (!assertSelfOrAdmin(req, res, userId)) return;
   const { data } = await getSupabase().from('personal_records').select('*').eq('user_id', userId);
   res.json(data || []);
 });
 
-app.post("/api/user/prs", async (req, res) => {
-  const { userId, exercise, value, date } = req.body;
+app.post("/api/user/prs", requireAuth, async (req: AuthenticatedRequest, res) => {
+  const { exercise, value, date } = req.body;
+  const userId = req.authUserId!;
   const { data: existing } = await getSupabase().from('personal_records').select('*').eq('user_id', userId).eq('exercise', exercise).single();
   
   if (existing) {
@@ -290,7 +310,7 @@ app.get("/api/challenges", async (req, res) => {
   res.json(data || []);
 });
 
-app.post("/api/challenges", async (req, res) => {
+app.post("/api/challenges", requireAuth, requireCoachOrAdmin, async (req, res) => {
   const { title, description, active, startDate, endDate, xp, coins, repeatable, dailyLimit, difficulty } = req.body;
   const { data, error } = await getSupabase().from('challenges').insert({
     title, description, active, start_date: startDate, end_date: endDate, xp, coins, repeatable, daily_limit: dailyLimit, difficulty
@@ -300,8 +320,9 @@ app.post("/api/challenges", async (req, res) => {
   res.json(data);
 });
 
-app.post("/api/challenges/complete", async (req, res) => {
-  const { userId, challengeId } = req.body;
+app.post("/api/challenges/complete", requireAuth, async (req: AuthenticatedRequest, res) => {
+  const { challengeId } = req.body;
+  const userId = req.authUserId!;
   if (!userId || !challengeId) return res.status(400).json({ message: "Dados incompletos" });
 
   const { data, error } = await getSupabase(true).rpc('claim_challenge_reward', {
@@ -322,8 +343,9 @@ app.post("/api/challenges/complete", async (req, res) => {
   });
 });
 
-app.post("/api/duels", async (req, res) => {
-  const { challengerId, opponentId, type, reward } = req.body;
+app.post("/api/duels", requireAuth, async (req: AuthenticatedRequest, res) => {
+  const { opponentId, type, reward } = req.body;
+  const challengerId = req.authUserId!;
   const { data, error } = await getSupabase().from('duels').insert({
     challenger_id: challengerId,
     opponent_id: opponentId,
@@ -338,16 +360,25 @@ app.post("/api/duels", async (req, res) => {
   res.json(data);
 });
 
-app.post("/api/duels/respond", async (req, res) => {
+app.post("/api/duels/respond", requireAuth, async (req: AuthenticatedRequest, res) => {
   const { duelId, status } = req.body;
+  const { data: duel } = await getSupabase(true)
+    .from('duels')
+    .select('challenger_id, opponent_id')
+    .eq('id', duelId)
+    .maybeSingle();
+  if (!duel) return res.status(404).json({ message: "Duelo não encontrado" });
+  const canRespond = req.authRole === 'admin' || duel.opponent_id === req.authUserId || duel.challenger_id === req.authUserId;
+  if (!canRespond) return res.status(403).json({ message: "Sem permissão para responder este duelo" });
   const { data, error } = await getSupabase().from('duels').update({ status }).eq('id', duelId).select().single();
   
   if (error) return res.status(400).json({ message: error.message });
   res.json(data);
 });
 
-app.get("/api/duels/history/:userId", async (req, res) => {
+app.get("/api/duels/history/:userId", requireAuth, async (req: AuthenticatedRequest, res) => {
   const { userId } = req.params;
+  if (!assertSelfOrAdmin(req, res, userId)) return;
   const { data, error } = await getSupabase()
     .from('duels')
     .select('*, challenger:profiles!challenger_id(*), opponent:profiles!opponent_id(*)')
@@ -359,9 +390,17 @@ app.get("/api/duels/history/:userId", async (req, res) => {
   res.json(data || []);
 });
 
-app.post("/api/duels/finish", async (req, res) => {
+app.post("/api/duels/finish", requireAuth, async (req: AuthenticatedRequest, res) => {
   const { duelId, winnerId } = req.body;
   if (!duelId || !winnerId) return res.status(400).json({ message: "Dados incompletos" });
+  const { data: duel } = await getSupabase(true)
+    .from('duels')
+    .select('challenger_id, opponent_id')
+    .eq('id', duelId)
+    .maybeSingle();
+  if (!duel) return res.status(404).json({ message: "Duelo não encontrado" });
+  const canFinish = req.authRole === 'admin' || duel.opponent_id === req.authUserId || duel.challenger_id === req.authUserId;
+  if (!canFinish) return res.status(403).json({ message: "Sem permissão para finalizar este duelo" });
 
   const { data, error } = await getSupabase(true).rpc('settle_duel_idempotent', {
     p_duel_id: duelId,
@@ -381,7 +420,7 @@ app.post("/api/duels/finish", async (req, res) => {
   });
 });
 
-app.post("/api/admin/schedule", async (req, res) => {
+app.post("/api/admin/schedule", requireAuth, requireAdmin, async (req, res) => {
   const { id, time, endTime, coach, capacity, days, isActive, checkinWindowMinutes } = req.body;
   if (!time || !endTime || !coach) return res.status(400).json({ message: "Dados incompletos" });
   
@@ -405,14 +444,14 @@ app.post("/api/admin/schedule", async (req, res) => {
   res.json({ success: true, schedule });
 });
 
-app.delete("/api/admin/schedule/:id", async (req, res) => {
+app.delete("/api/admin/schedule/:id", requireAuth, requireAdmin, async (req, res) => {
   const { id } = req.params;
   await getSupabase().from('schedule').delete().eq('id', id);
   const { data: schedule } = await getSupabase().from('schedule').select('*').order('time');
   res.json({ success: true, schedule });
 });
 
-app.post("/api/admin/settings", async (req, res) => {
+app.post("/api/admin/settings", requireAuth, requireAdmin, async (req, res) => {
   const { 
     name, logo, description, institutionalPhoto, topBanner, 
     lat, lng, radius, tvLayout, tvConfig, 
@@ -472,13 +511,14 @@ app.post("/api/admin/settings", async (req, res) => {
 });
 
 // Admin routes
-app.get("/api/admin/users", async (req, res) => {
+app.get("/api/admin/users", requireAuth, requireAdmin, async (req, res) => {
   const { data } = await getSupabase().from('profiles').select('*');
   res.json(data || []);
 });
 
-app.get("/api/profile/:userId", async (req, res) => {
+app.get("/api/profile/:userId", requireAuth, async (req: AuthenticatedRequest, res) => {
   const { userId } = req.params;
+  if (!assertSelfOrAdmin(req, res, userId)) return;
   const { data, error } = await getSupabase().from('profiles').select('*').eq('id', userId).single();
   if (error) return res.status(404).json({ message: "Perfil não encontrado" });
   const checkins = await fetchUserCheckins(userId);
@@ -516,7 +556,7 @@ app.post("/api/auth/signup", async (req, res) => {
   res.json({ success: true });
 });
 
-app.post("/api/admin/users/status", async (req, res) => {
+app.post("/api/admin/users/status", requireAuth, requireAdmin, async (req, res) => {
   const { userId, status, role } = req.body;
   const update: any = { status };
   if (role) update.role = role;
@@ -527,7 +567,7 @@ app.post("/api/admin/users/status", async (req, res) => {
 });
 
 // Store Management
-app.get("/api/admin/items", async (req, res) => {
+app.get("/api/admin/items", requireAuth, requireAdmin, async (req, res) => {
   const { data } = await getSupabase().from('items').select('*').order('created_at', { ascending: false });
   res.json(data || []);
 });
@@ -538,8 +578,9 @@ app.get("/api/items", async (_req, res) => {
   res.json(data || []);
 });
 
-app.post("/api/shop/buy", async (req, res) => {
-  const { userId, itemId } = req.body;
+app.post("/api/shop/buy", requireAuth, async (req: AuthenticatedRequest, res) => {
+  const { itemId } = req.body;
+  const userId = req.authUserId!;
   if (!userId || !itemId) return res.status(400).json({ message: "Dados incompletos" });
 
   const { data: profile, error: profileError } = await getSupabase(true)
@@ -568,8 +609,9 @@ app.post("/api/shop/buy", async (req, res) => {
   res.json({ success: true, coins: updatedCoins, inventory: updatedInventory });
 });
 
-app.post("/api/avatar/equip", async (req, res) => {
-  const { userId, itemId, slot } = req.body;
+app.post("/api/avatar/equip", requireAuth, async (req: AuthenticatedRequest, res) => {
+  const { itemId, slot } = req.body;
+  const userId = req.authUserId!;
   if (!userId || !slot) return res.status(400).json({ message: "Dados incompletos" });
 
   const { data: profile, error: profileError } = await getSupabase(true)
@@ -590,14 +632,14 @@ app.post("/api/avatar/equip", async (req, res) => {
   res.json({ success: true, equipped });
 });
 
-app.post("/api/admin/items", async (req, res) => {
+app.post("/api/admin/items", requireAuth, requireAdmin, async (req, res) => {
   const { id, name, slot, price, image } = req.body;
   const { data, error } = await getSupabase().from('items').upsert({ id, name, slot, price, image }).select().single();
   if (error) return res.status(400).json({ message: error.message });
   res.json(data);
 });
 
-app.post("/api/admin/seed-items", async (_req, res) => {
+app.post("/api/admin/seed-items", requireAuth, requireAdmin, async (_req, res) => {
   const seedItems = [
     { id: 'top_black', name: 'Top Preto', slot: 'top', price: 120, image: '🖤' },
     { id: 'shorts_neo', name: 'Short Neon', slot: 'bottom', price: 140, image: '🩳' },
@@ -613,14 +655,14 @@ app.post("/api/admin/seed-items", async (_req, res) => {
   res.json({ success: true, seeded: seedItems.length });
 });
 
-app.delete("/api/admin/items/:id", async (req, res) => {
+app.delete("/api/admin/items/:id", requireAuth, requireAdmin, async (req, res) => {
   const { id } = req.params;
   await getSupabase().from('items').delete().eq('id', id);
   res.json({ success: true });
 });
 
 // Duels Management
-app.get("/api/admin/duels", async (req, res) => {
+app.get("/api/admin/duels", requireAuth, requireAdmin, async (req, res) => {
   const { data } = await getSupabase()
     .from('duels')
     .select('*, challenger:profiles!challenger_id(*), opponent:profiles!opponent_id(*)')
@@ -629,12 +671,12 @@ app.get("/api/admin/duels", async (req, res) => {
 });
 
 // WOD History for Admin
-app.get("/api/admin/wods", async (req, res) => {
+app.get("/api/admin/wods", requireAuth, requireAdmin, async (req, res) => {
   const { data } = await getSupabase().from('wods').select('*').order('date', { ascending: false });
   res.json(data || []);
 });
 
-app.post("/api/admin/seed-test-data", async (_req, res) => {
+app.post("/api/admin/seed-test-data", requireAuth, requireAdmin, async (_req, res) => {
   const now = new Date();
   const formatDate = (d: Date) => formatInTimeZone(d, TIMEZONE, "yyyy-MM-dd");
 
