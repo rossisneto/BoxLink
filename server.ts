@@ -42,6 +42,20 @@ async function fetchUserCheckins(userId: string) {
   }));
 }
 
+async function fetchUserCheckins(userId: string) {
+  const { data } = await getSupabase(true)
+    .from('checkins')
+    .select('date, timestamp, class_time')
+    .eq('user_id', userId)
+    .order('timestamp', { ascending: false });
+
+  return (data || []).map((checkin: any) => ({
+    date: checkin.date,
+    timestamp: checkin.timestamp,
+    classTime: checkin.class_time ?? null,
+  }));
+}
+
 // API Routes
 app.get("/api/health", (req, res) => res.json({ status: "ok" }));
 
