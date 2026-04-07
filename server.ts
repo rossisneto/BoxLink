@@ -42,20 +42,6 @@ async function fetchUserCheckins(userId: string) {
   }));
 }
 
-async function fetchUserCheckins(userId: string) {
-  const { data } = await getSupabase(true)
-    .from('checkins')
-    .select('date, timestamp, class_time')
-    .eq('user_id', userId)
-    .order('timestamp', { ascending: false });
-
-  return (data || []).map((checkin: any) => ({
-    date: checkin.date,
-    timestamp: checkin.timestamp,
-    classTime: checkin.class_time ?? null,
-  }));
-}
-
 // API Routes
 app.get("/api/health", (req, res) => res.json({ status: "ok" }));
 
@@ -69,7 +55,7 @@ app.get("/api/tv-data", async (req, res) => {
   const { data: checkins } = await getSupabase().from('checkins').select('*, profiles(name, avatar_equipped)').eq('date', today);
   const { data: challenges } = await getSupabase().from('challenges').select('*').eq('active', true);
   const { data: duels } = await getSupabase().from('duels').select('*, challenger:profiles!challenger_id(name), opponent:profiles!opponent_id(name)').eq('status', 'accepted');
-  const { data: rankings } = await getSupabase().from('profiles').select('name, xp, level, avatar_equipped').order('xp', { ascending: false }).limit(10);
+  const { data: rankings } = await getSupabase().rpc('get_general_xp_ranking', { p_limit: 10 });
   
   const { data: approvedUsers } = await getSupabase().from('profiles').select('id').eq('status', 'approved');
   const approvedCount = approvedUsers?.length || 0;
@@ -83,15 +69,10 @@ app.get("/api/tv-data", async (req, res) => {
     .limit(1)
     .single();
 
-  const nowTime = formatInTimeZone(new Date(), TIMEZONE, "HH:mm");
-  const { data: upcomingClass } = await getSupabase()
-    .from('schedule')
-    .select('time, coach')
-    .eq('is_active', true)
-    .gte('time', nowTime)
-    .order('time', { ascending: true })
-    .limit(1)
-    .single();
+  const { data: classWindow } = await getSupabase().rpc('get_current_class_window', {
+    p_timezone: TIMEZONE,
+  });
+  const upcomingClass = classWindow?.next_class ?? null;
 
   const stats = {
     frequency: `${frequencyPct}% FREQUÊNCIA`,
@@ -157,38 +138,27 @@ app.post("/api/wods/results", async (req, res) => {
 });
 
 app.get("/api/rankings", async (_req, res) => {
-  const { data: xpRank, error: xpError } = await getSupabase()
-    .from('profiles')
-    .select('id, name, email, role, status, xp, coins, level, avatar_equipped, avatar_inventory, paid_bonuses, created_at')
-    .eq('status', 'approved')
-    .order('xp', { ascending: false });
+  const { data: xpRank, error: xpError } = await getSupabase().rpc('get_general_xp_ranking', { p_limit: 200 });
 
   if (xpError) return res.status(400).json({ message: xpError.message });
 
-  const currentMonthStart = formatInTimeZone(new Date(), TIMEZONE, "yyyy-MM-01");
-  const { data: monthCheckins } = await getSupabase()
-    .from('checkins')
-    .select('user_id')
-    .gte('date', currentMonthStart);
+  const { data: freqRankRaw, error: freqError } = await getSupabase().rpc('get_monthly_frequency_ranking', {
+    p_limit: 200,
+    p_timezone: TIMEZONE,
+  });
+  if (freqError) return res.status(400).json({ message: freqError.message });
 
   const freqMap = new Map<string, number>();
-  (monthCheckins || []).forEach((checkin: any) => {
-    freqMap.set(checkin.user_id, (freqMap.get(checkin.user_id) || 0) + 1);
-  });
+  (freqRankRaw || []).forEach((row: any) => freqMap.set(row.id, row.month_checkin_count || 0));
 
   const mappedUsers = (xpRank || []).map((profile: any) => ({
     ...profile,
-    avatar: {
-      equipped: profile.avatar_equipped,
-      inventory: profile.avatar_inventory || [],
-    },
-    checkins: [],
-    paidBonuses: profile.paid_bonuses || [],
-    createdAt: profile.created_at,
     monthCheckinCount: freqMap.get(profile.id) || 0,
   }));
 
-  const freqRank = [...mappedUsers].sort((a, b) => (b.monthCheckinCount || 0) - (a.monthCheckinCount || 0));
+  const freqRank = [...mappedUsers].sort((a, b) =>
+    (b.monthCheckinCount || 0) - (a.monthCheckinCount || 0) || (b.xp || 0) - (a.xp || 0)
+  );
   res.json({ xpRank: mappedUsers, freqRank });
 });
 
