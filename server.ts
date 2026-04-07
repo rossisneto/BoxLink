@@ -597,6 +597,22 @@ app.post("/api/admin/items", async (req, res) => {
   res.json(data);
 });
 
+app.post("/api/admin/seed-items", async (_req, res) => {
+  const seedItems = [
+    { id: 'top_black', name: 'Top Preto', slot: 'top', price: 120, image: '🖤' },
+    { id: 'shorts_neo', name: 'Short Neon', slot: 'bottom', price: 140, image: '🩳' },
+    { id: 'shoe_racer', name: 'Racer', slot: 'shoes', price: 200, image: '👟' },
+    { id: 'band_power', name: 'Power Band', slot: 'wrist_accessory', price: 90, image: '⌚' },
+  ];
+
+  const { error } = await getSupabase()
+    .from('items')
+    .upsert(seedItems, { onConflict: 'id' });
+
+  if (error) return res.status(400).json({ message: error.message });
+  res.json({ success: true, seeded: seedItems.length });
+});
+
 app.delete("/api/admin/items/:id", async (req, res) => {
   const { id } = req.params;
   await getSupabase().from('items').delete().eq('id', id);
@@ -616,6 +632,48 @@ app.get("/api/admin/duels", async (req, res) => {
 app.get("/api/admin/wods", async (req, res) => {
   const { data } = await getSupabase().from('wods').select('*').order('date', { ascending: false });
   res.json(data || []);
+});
+
+app.post("/api/admin/seed-test-data", async (_req, res) => {
+  const now = new Date();
+  const formatDate = (d: Date) => formatInTimeZone(d, TIMEZONE, "yyyy-MM-dd");
+
+  const wods = [
+    { date: formatDate(now), name: 'Engine Blast', type: 'AMRAP', warmup: '500m row\\n20 air squats', skill: 'Thruster técnica\\n5x5', rx: '12 min AMRAP\\n10 thrusters\\n10 pull-ups', scaled: '12 min AMRAP\\n8 thrusters\\n8 ring rows', beginner: '10 min AMRAP\\n6 DB thrusters\\n6 rows' },
+    { date: formatDate(new Date(now.getTime() - 86400000)), name: 'Core Grind', type: 'For Time', warmup: '3 rounds\\n20s plank', skill: 'Toes-to-bar drill', rx: '21-15-9\\nT2B + Wall Balls', scaled: '18-12-6\\nKnee Raises + WB', beginner: '15-12-9\\nSit-up + Goblet Squat' }
+  ];
+
+  const challenges = [
+    { title: '100 Double Unders', description: 'Complete 100 DU sem parar', active: true, xp: 40, coins: 15, repeatable: false, difficulty: 'medium' },
+    { title: '5K Remo semanal', description: 'Acumule 5k de remo na semana', active: true, xp: 55, coins: 20, repeatable: true, daily_limit: 1, difficulty: 'hard' }
+  ];
+
+  for (const wod of wods) {
+    const { data: existingWod } = await getSupabase()
+      .from('wods')
+      .select('id')
+      .eq('date', wod.date)
+      .eq('name', wod.name)
+      .maybeSingle();
+    if (!existingWod) {
+      const { error: wodError } = await getSupabase().from('wods').insert(wod);
+      if (wodError) return res.status(400).json({ message: wodError.message });
+    }
+  }
+
+  for (const challenge of challenges) {
+    const { data: existingChallenge } = await getSupabase()
+      .from('challenges')
+      .select('id')
+      .eq('title', challenge.title)
+      .maybeSingle();
+    if (!existingChallenge) {
+      const { error: challengeError } = await getSupabase().from('challenges').insert(challenge);
+      if (challengeError) return res.status(400).json({ message: challengeError.message });
+    }
+  }
+
+  res.json({ success: true, wods: wods.length, challenges: challenges.length });
 });
 
 async function startServer() {
