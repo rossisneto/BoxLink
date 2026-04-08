@@ -35,6 +35,7 @@ const getSupabase = (useServiceRole = false) => {
 };
 
 import { addReward } from "./src/lib/rewardService";
+import { calculateDistance } from "./src/lib/locationUtils";
 
 // API Routes
 app.get("/api/health", (req, res) => res.json({ status: "ok" }));
@@ -151,6 +152,88 @@ app.get("/api/tv-data", async (req, res) => {
     rankings: rankings || [],
     stats
   });
+});
+
+app.post("/api/checkin", async (req, res) => {
+  const { userId, lat, lng, classTime } = req.body;
+  
+  if (!userId || !lat || !lng || !classTime) {
+    return res.status(400).json({ message: "Dados incompletos" });
+  }
+
+  try {
+    // 1. Get Box Settings (Location and Radius)
+    const { data: settings } = await getSupabase().from('box_settings').select('*').single();
+    
+    // Fallbacks from rules if not in DB
+    let boxLat = settings?.lat || -23.5505;
+    let boxLng = settings?.lng || -46.6333;
+    let radius = settings?.radius || 500;
+
+    // Load dynamic rules for radius if enabled
+    const rulesPath = path.join(__dirname, "src", "config", "game_rules.json");
+    if (fs.existsSync(rulesPath)) {
+      const rules = JSON.parse(fs.readFileSync(rulesPath, "utf-8"));
+      if (rules.geofencing?.enabled) {
+         radius = rules.geofencing.default_radius || radius;
+      }
+    }
+
+    // 2. Validate Distance
+    const distance = calculateDistance(lat, lng, boxLat, boxLng);
+    if (distance > radius) {
+      return res.status(400).json({ 
+        message: `Voce esta muito longe do Box (${Math.round(distance)}m). Distancia maxima: ${radius}m.` 
+      });
+    }
+
+    // 3. Record Check-in
+    const today = formatInTimeZone(new Date(), TIMEZONE, "yyyy-MM-dd");
+    
+    // Check if already checked in today
+    const { data: existing } = await getSupabase()
+      .from('checkins')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('date', today);
+
+    if (existing && existing.length > 0) {
+      return res.status(400).json({ message: "Voce ja realizou check-in hoje" });
+    }
+
+    const { data, error } = await getSupabase().from('checkins').insert({
+      user_id: userId,
+      date: today,
+      class_time: classTime,
+      timestamp: new Date().toISOString()
+    }).select().single();
+
+    if (error) throw error;
+
+    // 4. Reward User
+    let xp = 20;
+    let coins = 5;
+
+    if (fs.existsSync(rulesPath)) {
+      const rules = JSON.parse(fs.readFileSync(rulesPath, "utf-8"));
+      xp = rules.rewards.checkin.xp || xp;
+      coins = rules.rewards.checkin.coins || coins;
+    }
+
+    const rewardResult = await addReward(userId, 'checkin', xp, coins, `Check-in: ${classTime}`);
+
+    res.json({ 
+      success: true, 
+      xp, 
+      coins, 
+      levelUp: rewardResult?.levelUp,
+      distance: Math.round(distance)
+    });
+
+  } catch (error: any) {
+    console.error('Check-in error:', error);
+    res.status(500).json({ message: "Erro ao realizar check-in: " + error.message });
+  }
 });
 
 app.get("/api/schedule", async (req, res) => {
