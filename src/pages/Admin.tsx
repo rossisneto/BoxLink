@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { 
   LayoutDashboard, Users, MapPin, Calendar, Megaphone, Plus, Settings, 
   ChevronRight, ChevronDown, Activity, Check, X, Shield, UserPlus, 
-  Image as ImageIcon, ShoppingBag, Tv, Trophy, History, Search, Filter,
+  ImageIcon, ShoppingBag, Tv, Trophy, History, Search, Filter,
   Clock, ToggleLeft, ToggleRight, Trash2, Edit2, Save
 } from 'lucide-react';
 import { cn } from '../lib/utils';
@@ -10,6 +10,7 @@ import { User, BoxSettings, Schedule, Item, Duel, Wod } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { motion, AnimatePresence } from 'framer-motion';
 import { format, parseISO } from 'date-fns';
+import { supabase } from '../lib/supabase';
 
 export default function Admin() {
   const { user } = useAuth();
@@ -66,7 +67,7 @@ export default function Admin() {
     );
   };
 
-  useEffect(() => {
+  const fetchAll = () => {
     fetch('/api/admin/users').then(res => res.json()).then(data => {
       const mappedUsers = data.map((u: any) => ({
         ...u,
@@ -92,6 +93,25 @@ export default function Admin() {
     fetch('/api/admin/items').then(res => res.json()).then(setItems);
     fetch('/api/admin/duels').then(res => res.json()).then(setDuels);
     fetch('/api/admin/wods').then(res => res.json()).then(setWods);
+  };
+
+  useEffect(() => {
+    fetchAll();
+
+    const channel = supabase
+      .channel('admin_changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, () => fetchAll())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'schedule' }, () => fetchAll())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'challenges' }, () => fetchAll())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'items' }, () => fetchAll())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'duels' }, () => fetchAll())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'wods' }, () => fetchAll())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'box_settings' }, () => fetchAll())
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   const handleStatusChange = async (userId: string, status: string) => {

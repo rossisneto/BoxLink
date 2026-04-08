@@ -3,19 +3,31 @@ import { Trophy, Zap, Calendar, Timer, ChevronDown, ChevronUp, User, Medal } fro
 import { cn } from '../lib/utils';
 import { User as UserType } from '../types';
 import { motion, AnimatePresence } from 'framer-motion';
-
-const getFirstWord = (value?: string | null, fallback = 'ATLETA') => value?.trim()?.split(/\s+/)[0] || fallback;
-const getInitial = (value?: string | null, fallback = '?') => value?.trim()?.charAt(0) || fallback;
+import { supabase } from '../lib/supabase';
 
 export default function Leaderboard() {
   const [rankings, setRankings] = useState<{ xpRank: UserType[], freqRank: UserType[] } | null>(null);
   const [activeTab, setActiveTab] = useState<'xp' | 'freq' | 'wod'>('xp');
   const [isExpanded, setIsExpanded] = useState(false);
 
-  useEffect(() => {
+  const fetchRankings = () => {
     fetch('/api/rankings')
       .then(res => res.json())
       .then(setRankings);
+  };
+
+  useEffect(() => {
+    fetchRankings();
+
+    const channel = supabase
+      .channel('rankings_changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, () => fetchRankings())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'checkins' }, () => fetchRankings())
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   if (!rankings) return <div className="min-h-screen bg-background flex items-center justify-center text-primary font-headline font-black text-2xl italic animate-pulse">CARREGANDO RANKINGS...</div>;
@@ -60,7 +72,7 @@ export default function Leaderboard() {
             <div className="absolute -top-2 -right-2 bg-outline-variant/30 text-on-surface text-[10px] font-black px-2 py-0.5 rounded-full">#2</div>
           </div>
           <div className="text-center">
-            <p className="text-xs font-headline font-black text-on-surface uppercase italic truncate max-w-[80px]">{getFirstWord(top3[1]?.name)}</p>
+            <p className="text-xs font-headline font-black text-on-surface uppercase italic truncate max-w-[80px]">{top3[1]?.name.split(' ')[0]}</p>
             <p className="text-[10px] text-on-surface-variant font-bold uppercase tracking-widest">
               {activeTab === 'xp' ? `${top3[1]?.xp} XP` : `${top3[1]?.monthCheckinCount || 0} Check-ins`}
             </p>
@@ -79,7 +91,7 @@ export default function Leaderboard() {
             <div className="absolute -top-3 -right-3 bg-primary text-background text-xs font-black px-3 py-1 rounded-full shadow-lg">#1</div>
           </div>
           <div className="text-center">
-            <p className="text-sm font-headline font-black text-primary uppercase italic truncate max-w-[100px]">{getFirstWord(top3[0]?.name)}</p>
+            <p className="text-sm font-headline font-black text-primary uppercase italic truncate max-w-[100px]">{top3[0]?.name.split(' ')[0]}</p>
             <p className="text-xs text-on-surface font-bold uppercase tracking-widest">
               {activeTab === 'xp' ? `${top3[0]?.xp} XP` : `${top3[0]?.monthCheckinCount || 0} Check-ins`}
             </p>
@@ -98,7 +110,7 @@ export default function Leaderboard() {
             <div className="absolute -top-2 -right-2 bg-secondary/30 text-on-surface text-[10px] font-black px-2 py-0.5 rounded-full">#3</div>
           </div>
           <div className="text-center">
-            <p className="text-xs font-headline font-black text-on-surface uppercase italic truncate max-w-[80px]">{getFirstWord(top3[2]?.name)}</p>
+            <p className="text-xs font-headline font-black text-on-surface uppercase italic truncate max-w-[80px]">{top3[2]?.name.split(' ')[0]}</p>
             <p className="text-[10px] text-on-surface-variant font-bold uppercase tracking-widest">
               {activeTab === 'xp' ? `${top3[2]?.xp} XP` : `${top3[2]?.monthCheckinCount || 0} Check-ins`}
             </p>
@@ -124,7 +136,7 @@ export default function Leaderboard() {
               <div className="flex items-center gap-4">
                 <span className="w-6 text-on-surface-variant font-headline font-black text-xs italic">#{i + 4}</span>
                 <div className="w-10 h-10 rounded-full bg-surface-container-highest flex items-center justify-center text-on-surface font-headline font-black text-sm">
-                  {getInitial(u.name)}
+                  {u.name[0]}
                 </div>
                 <div>
                   <p className="text-on-surface font-bold uppercase text-sm italic">{u.name}</p>
