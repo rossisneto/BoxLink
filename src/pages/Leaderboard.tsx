@@ -3,32 +3,35 @@ import { Trophy, Zap, Calendar, Timer, ChevronDown, ChevronUp, User, Medal } fro
 import { cn } from '../lib/utils';
 import { User as UserType } from '../types';
 import { motion, AnimatePresence } from 'framer-motion';
-import { supabase } from '../lib/supabase';
 
 export default function Leaderboard() {
   const [rankings, setRankings] = useState<{ xpRank: UserType[], freqRank: UserType[] } | null>(null);
   const [activeTab, setActiveTab] = useState<'xp' | 'freq' | 'wod'>('xp');
   const [isExpanded, setIsExpanded] = useState(false);
 
-  const fetchRankings = () => {
-    fetch('/api/rankings')
-      .then(res => res.json())
-      .then(setRankings);
-  };
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    fetchRankings();
-
-    const channel = supabase
-      .channel('rankings_changes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, () => fetchRankings())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'checkins' }, () => fetchRankings())
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    fetch('/api/rankings')
+      .then(res => {
+        if (!res.ok) throw new Error('Falha ao carregar rankings');
+        return res.json();
+      })
+      .then(data => {
+        if (data.message) throw new Error(data.message);
+        setRankings(data);
+      })
+      .catch(err => {
+        console.error(err);
+        setError(err.message);
+      });
   }, []);
+
+  if (error) return <div className="min-h-screen bg-background flex flex-col items-center justify-center text-red-500 font-headline font-black text-xl italic p-4 text-center">
+    <p>ERRO AO CARREGAR RANKINGS</p>
+    <p className="text-sm mt-2">{error}</p>
+    <button onClick={() => window.location.reload()} className="mt-4 bg-primary text-background px-6 py-2 rounded-xl text-sm not-italic">TENTAR NOVAMENTE</button>
+  </div>;
 
   if (!rankings) return <div className="min-h-screen bg-background flex items-center justify-center text-primary font-headline font-black text-2xl italic animate-pulse">CARREGANDO RANKINGS...</div>;
 
