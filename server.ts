@@ -105,13 +105,22 @@ app.get("/api/rankings", async (req, res) => {
 app.post("/api/admin/seed-items", async (req, res) => {
   try {
     const items = [
-      { id: 'base_1', name: 'Base Masculina', slot: 'base_outfit', price: 0, image: 'https://api.dicebear.com/7.x/avataaars/svg?seed=Felix' },
-      { id: 'base_2', name: 'Base Feminina', slot: 'base_outfit', price: 0, image: 'https://api.dicebear.com/7.x/avataaars/svg?seed=Aneka' },
+      { id: 'base_1', name: 'Base Masculina', slot: 'base_outfit', price: 0, image: '👤' },
+      { id: 'base_2', name: 'Base Feminina', slot: 'base_outfit', price: 0, image: '👤' },
       { id: 'top_1', name: 'Camiseta CrossCity', slot: 'top', price: 50, image: '👕' },
       { id: 'top_2', name: 'Top Performance', slot: 'top', price: 75, image: '🎽' },
+      { id: 'top_premium_1', name: 'Camiseta Pro Elite', slot: 'top', price: 450, image: '💎' },
+      { id: 'top_premium_2', name: 'Regata HyperDry', slot: 'top', price: 380, image: '💎' },
       { id: 'bottom_1', name: 'Shorts Treino', slot: 'bottom', price: 40, image: '🩳' },
+      { id: 'bottom_premium_1', name: 'Calça Tech Fleece', slot: 'bottom', price: 550, image: '💎' },
       { id: 'shoes_1', name: 'Nano X3', slot: 'shoes', price: 150, image: '👟' },
-      { id: 'acc_1', name: 'Munhequeira', slot: 'accessory', price: 25, image: '🧤' },
+      { id: 'shoes_premium_1', name: 'Metcon 9 Pro', slot: 'shoes', price: 850, image: '💎' },
+      { id: 'acc_1', name: 'Óculos de Sol', slot: 'accessory', price: 25, image: '🕶️' },
+      { id: 'belt_1', name: 'Cinturão LPO', slot: 'accessory', price: 200, image: '🥋' },
+      { id: 'grips_1', name: 'Grips (Couro)', slot: 'wrist_accessory', price: 120, image: '🧤' },
+      { id: 'head_1', name: 'Boné CrossCity', slot: 'head_accessory', price: 30, image: '🧢' },
+      { id: 'headband_1', name: 'Headband', slot: 'head_accessory', price: 45, image: '🤕' },
+      { id: 'aura_1', name: 'Aura de Fogo', slot: 'special', price: 500, image: '🔥' },
     ];
 
     for (const item of items) {
