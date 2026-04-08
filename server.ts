@@ -8,7 +8,13 @@ import { formatInTimeZone } from "date-fns-tz";
 import cors from "cors";
 import bodyParser from "body-parser";
 
-dotenv.config();
+import fs from "fs";
+
+if (fs.existsSync(".env.local")) {
+  dotenv.config({ path: ".env.local" });
+} else {
+  dotenv.config();
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -28,29 +34,7 @@ const getSupabase = (useServiceRole = false) => {
   return createClient(supabaseUrl, useServiceRole ? supabaseServiceKey : supabaseKey);
 };
 
-// Helper to add rewards
-async function addReward(userId: string, type: string, xp: number, coins: number, description: string) {
-  const { data: profile } = await getSupabase(true).from('profiles').select('xp, coins, level').eq('id', userId).single();
-  if (!profile) return null;
-
-  const newXp = (profile.xp || 0) + xp;
-  const newCoins = (profile.coins || 0) + coins;
-  
-  // Simple level up logic
-  const xpToNextLevel = profile.level * 100;
-  let newLevel = profile.level;
-  let levelUp = false;
-  
-  if (newXp >= xpToNextLevel) {
-    newLevel += 1;
-    levelUp = true;
-  }
-
-  await getSupabase(true).from('profiles').update({ xp: newXp, coins: newCoins, level: newLevel }).eq('id', userId);
-  await getSupabase(true).from('reward_history').insert({ user_id: userId, type, xp, coins, description });
-  
-  return { levelUp };
-}
+import { addReward } from "./src/lib/rewardService";
 
 // API Routes
 app.get("/api/health", (req, res) => res.json({ status: "ok" }));
@@ -187,6 +171,63 @@ app.post("/api/wods", async (req, res) => {
   
   if (error) return res.status(400).json({ message: error.message });
   res.json(data);
+});
+
+app.post("/api/wods/results", async (req, res) => {
+  const { userId, wodId, result, type } = req.body;
+  if (!userId || !wodId || !result || !type) {
+    return res.status(400).json({ message: "Dados incompletos" });
+  }
+
+  const { data, error } = await getSupabase().from('wod_results').insert({
+    user_id: userId,
+    wod_id: wodId,
+    result,
+    type,
+    created_at: new Date().toISOString()
+  }).select().single();
+
+  if (error) return res.status(400).json({ message: error.message });
+
+  // Load Reward logic from game_rules.json
+  let xp = 30; // Default fallback
+  let coins = 5;
+  let levelUp = false;
+
+  try {
+    const rulesPath = path.join(__dirname, "src", "config", "game_rules.json");
+    if (fs.existsSync(rulesPath)) {
+      const rules = JSON.parse(fs.readFileSync(rulesPath, "utf-8"));
+      const wodRewards = rules.rewards.wod_result;
+      
+      if (wodRewards.is_fixed) {
+        xp = wodRewards.xp;
+        coins = wodRewards.coins;
+      } else {
+        // Future logic for variable rewards could go here
+        xp = wodRewards[type.toLowerCase()]?.xp || xp;
+        coins = wodRewards[type.toLowerCase()]?.coins || coins;
+      }
+    }
+  } catch (err) {
+    console.error("Error loading game rules:", err);
+  }
+
+  const resultReward = await addReward(userId, 'wod_result', xp, coins, `Resultado de WOD: ${type}`);
+  
+  res.json({ success: true, data, xp, coins, levelUp: resultReward?.levelUp });
+});
+
+app.get("/api/wods/results/:wodId", async (req, res) => {
+  const { wodId } = req.params;
+  const { data, error } = await getSupabase()
+    .from('wod_results')
+    .select('*, profiles(name)')
+    .eq('wod_id', wodId)
+    .order('created_at', { ascending: false });
+    
+  if (error) return res.status(400).json({ message: error.message });
+  res.json(data || []);
 });
 
 app.get("/api/coach/results", async (req, res) => {
