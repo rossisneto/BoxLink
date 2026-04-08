@@ -69,7 +69,7 @@ export default function TV() {
 
   const { wod, checkins, settings, rankings, stats, duels } = data;
   const currentAthlete = rankings?.[athleteIndex];
-  const nextAthlete = rankings?.[(athleteIndex + 1) % rankings.length];
+  const nextAthlete = (rankings && rankings.length > 0) ? rankings[(athleteIndex + 1) % rankings.length] : null;
 
   return (
     <div className="min-h-screen bg-black text-white font-sans overflow-hidden flex flex-col p-6 gap-6 relative select-none">
@@ -138,7 +138,7 @@ export default function TV() {
               </div>
               <h3 className="text-primary text-xs font-black uppercase tracking-[0.3em] italic mb-6">WARM-UP</h3>
               <div className="space-y-4">
-                {wod.warmup.split('\n').map((line: string, i: number) => (
+                {(wod.warmup || '---').split('\n').map((line: string, i: number) => (
                   <div key={i} className="flex items-center gap-4">
                     <div className="w-2 h-2 rounded-full bg-primary shadow-[0_0_10px_#cafd00]"></div>
                     <p className="text-2xl font-headline font-black text-white uppercase italic tracking-tight">{line}</p>
@@ -154,7 +154,7 @@ export default function TV() {
               </div>
               <h3 className="text-secondary text-xs font-black uppercase tracking-[0.3em] italic mb-6">SKILL</h3>
               <div className="space-y-2">
-                <h4 className="text-4xl font-headline font-black text-white uppercase italic tracking-tighter leading-none mb-6">{wod.skill.split('\n')[0]}</h4>
+                <h4 className="text-4xl font-headline font-black text-white uppercase italic tracking-tighter leading-none mb-6">{(wod.skill || 'Técnica').split('\n')[0]}</h4>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="bg-white/5 p-4 rounded-2xl border border-white/5">
                     <span className="text-white/40 text-[8px] font-black uppercase tracking-widest block mb-1">SETS</span>
@@ -233,8 +233,8 @@ export default function TV() {
                       <div className="absolute -bottom-2 -right-2 bg-secondary text-white text-[10px] font-black px-3 py-1 rounded-full uppercase italic shadow-lg">ELITE</div>
                     </div>
                     <div>
-                      <h4 className="text-4xl font-headline font-black text-white uppercase italic tracking-tighter leading-none">{currentAthlete.name}</h4>
-                      <p className="text-primary text-xs font-black uppercase tracking-widest mt-2">ELITE MEMBER</p>
+                      <h4 className="text-4xl font-headline font-black text-white uppercase italic tracking-tighter leading-none">{(currentAthlete?.name || 'Atleta')}</h4>
+                      <p className="text-primary text-xs font-black uppercase tracking-widest mt-2">{currentAthlete?.role === 'coach' ? 'COACH' : 'ELITE MEMBER'}</p>
                     </div>
                   </div>
 
@@ -259,11 +259,11 @@ export default function TV() {
                     <div className="mt-8 pt-8 border-t border-white/5 flex items-center justify-between">
                       <div className="flex items-center gap-4">
                         <div className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center text-white/40 font-headline font-black italic">
-                          {nextAthlete.name[0]}
+                          {(nextAthlete?.name || 'A')[0]}
                         </div>
                         <div>
                           <p className="text-white/40 text-[8px] font-black uppercase tracking-widest">NEXT UP</p>
-                          <p className="text-lg font-headline font-black text-white/80 uppercase italic leading-none">{nextAthlete.name}</p>
+                          <p className="text-lg font-headline font-black text-white/80 uppercase italic leading-none">{nextAthlete?.name || 'Próximo Atleta'}</p>
                         </div>
                       </div>
                       <div className="flex gap-1">
@@ -283,9 +283,9 @@ export default function TV() {
       {/* Footer Ticker */}
       <footer className="h-16 bg-[#111] rounded-2xl border border-white/5 overflow-hidden flex items-center relative">
         <div className="flex-1 overflow-hidden">
-          <div className="flex gap-24 animate-marquee whitespace-nowrap items-center">
+          <div className="flex animate-marquee whitespace-nowrap items-center">
             {[1, 2].map(i => (
-              <div key={i} className="flex gap-24 items-center">
+              <div key={i} className="flex gap-24 items-center pr-24">
                 <div className="flex items-center gap-4">
                   <span className="text-primary text-[10px] font-black uppercase tracking-widest italic">FREQUENCY:</span>
                   <span className="text-xl font-headline font-black text-white uppercase italic tracking-tight">{stats.frequency}</span>

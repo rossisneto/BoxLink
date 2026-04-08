@@ -3,7 +3,7 @@
 -- 1. User Profiles (Extends Supabase Auth)
 create table public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
-  name text,
+  name text default 'Atleta',
   email text,
   role text default 'athlete' check (role in ('athlete', 'coach', 'admin')),
   status text default 'pending' check (status in ('pending', 'approved', 'rejected')),
@@ -216,7 +216,7 @@ begin
   insert into public.profiles (id, name, email, role, status)
   values (
     new.id, 
-    new.raw_user_meta_data->>'name', 
+    coalesce(new.raw_user_meta_data->>'name', 'Atleta'), 
     new.email,
     case when new.email = 'claudiobrasilia13@gmail.com' then 'admin' else 'athlete' end,
     case when new.email = 'claudiobrasilia13@gmail.com' then 'approved' else 'pending' end

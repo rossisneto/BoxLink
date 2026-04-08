@@ -112,9 +112,9 @@ export default function MyBox() {
                 #{index + 1}
               </div>
               <div className="w-12 h-12 rounded-full bg-surface-container-highest flex items-center justify-center text-on-surface font-headline font-black text-xl">
-                {athlete.name[0]}
+                {(athlete.name || 'A')[0]}
               </div>
-              <span className="text-[10px] font-headline font-black text-on-surface uppercase italic truncate w-full text-center">{athlete.name.split(' ')[0]}</span>
+              <span className="text-[10px] font-headline font-black text-on-surface uppercase italic truncate w-full text-center">{(athlete.name || 'Atleta').split(' ')[0]}</span>
               <span className="text-[8px] text-on-surface-variant font-bold uppercase tracking-widest">{athlete.xp} XP</span>
             </div>
           ))}
@@ -131,10 +131,10 @@ export default function MyBox() {
             <div key={coach.id} className="bg-surface-container-low p-4 rounded-2xl border border-outline-variant/10 flex items-center justify-between group hover:border-primary/30 transition-all">
               <div className="flex items-center gap-4">
                 <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center text-primary font-headline font-black text-xl">
-                  {coach.name[0]}
+                  {(coach.name || 'C')[0]}
                 </div>
                 <div>
-                  <p className="text-on-surface font-bold uppercase text-sm italic">{coach.name}</p>
+                  <p className="text-on-surface font-bold uppercase text-sm italic">{coach.name || 'Coach'}</p>
                   <p className="text-on-surface-variant text-[10px] font-bold uppercase tracking-widest">
                     {coach.role === 'admin' ? 'Head Coach' : 'Coach'}
                   </p>

@@ -36,28 +36,22 @@ export default function Layout() {
     <div className="min-h-screen bg-background text-on-surface font-body selection:bg-primary selection:text-background">
       {/* HR Bar - Parity with CrossCity */}
       <div className="bg-surface-container-highest/50 border-b border-outline-variant/10 px-4 py-1.5 flex items-center justify-between overflow-hidden z-50 sticky top-0 backdrop-blur-md">
-        <div className="flex items-center gap-4 animate-marquee-slow whitespace-nowrap">
-          <div className="flex items-center gap-2">
-            <Activity className="w-3 h-3 text-primary animate-pulse" />
-            <span className="text-[8px] font-black uppercase tracking-widest italic">Live HR:</span>
-          </div>
-          {[72, 85, 110, 92, 125, 88, 140, 95, 102, 118].map((bpm, i) => (
-            <div key={i} className="flex items-center gap-1.5 bg-surface-container-low px-2 py-0.5 rounded-full border border-outline-variant/10">
-              <span className="text-[8px] font-bold text-on-surface-variant">ATLETA {i+1}</span>
-              <span className={cn(
-                "text-[8px] font-black italic",
-                bpm > 110 ? "text-secondary" : "text-primary"
-              )}>{bpm} BPM</span>
-            </div>
-          ))}
-          {/* Duplicate for seamless loop */}
-          {[72, 85, 110, 92, 125, 88, 140, 95, 102, 118].map((bpm, i) => (
-            <div key={`dup-${i}`} className="flex items-center gap-1.5 bg-surface-container-low px-2 py-0.5 rounded-full border border-outline-variant/10">
-              <span className="text-[8px] font-bold text-on-surface-variant">ATLETA {i+1}</span>
-              <span className={cn(
-                "text-[8px] font-black italic",
-                bpm > 110 ? "text-secondary" : "text-primary"
-              )}>{bpm} BPM</span>
+        <div className="flex items-center animate-marquee-slow whitespace-nowrap">
+          {[1, 2].map((loop) => (
+            <div key={loop} className="flex items-center gap-4 pr-4">
+              <div className="flex items-center gap-2">
+                <Activity className="w-3 h-3 text-primary animate-pulse" />
+                <span className="text-[8px] font-black uppercase tracking-widest italic">Live HR:</span>
+              </div>
+              {[72, 85, 110, 92, 125, 88, 140, 95, 102, 118].map((bpm, i) => (
+                <div key={`${loop}-${i}`} className="flex items-center gap-1.5 bg-surface-container-low px-2 py-0.5 rounded-full border border-outline-variant/10">
+                  <span className="text-[8px] font-bold text-on-surface-variant">ATLETA {i+1}</span>
+                  <span className={cn(
+                    "text-[8px] font-black italic",
+                    bpm > 110 ? "text-secondary" : "text-primary"
+                  )}>{bpm} BPM</span>
+                </div>
+              ))}
             </div>
           ))}
         </div>

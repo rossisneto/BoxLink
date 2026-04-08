@@ -75,9 +75,9 @@ export default function Leaderboard() {
             <div className="absolute -top-2 -right-2 bg-outline-variant/30 text-on-surface text-[10px] font-black px-2 py-0.5 rounded-full">#2</div>
           </div>
           <div className="text-center">
-            <p className="text-xs font-headline font-black text-on-surface uppercase italic truncate max-w-[80px]">{top3[1]?.name.split(' ')[0]}</p>
+            <p className="text-xs font-headline font-black text-on-surface uppercase italic truncate max-w-[80px]">{(top3[1]?.name || '---').split(' ')[0]}</p>
             <p className="text-[10px] text-on-surface-variant font-bold uppercase tracking-widest">
-              {activeTab === 'xp' ? `${top3[1]?.xp} XP` : `${top3[1]?.monthCheckinCount || 0} Check-ins`}
+              {top3[1] ? (activeTab === 'xp' ? `${top3[1]?.xp} XP` : `${top3[1]?.monthCheckinCount || 0} Check-ins`) : '---'}
             </p>
           </div>
           <div className="w-16 h-20 bg-surface-container-low rounded-t-2xl border-x border-t border-outline-variant/10 flex flex-col items-center justify-center">
@@ -94,9 +94,9 @@ export default function Leaderboard() {
             <div className="absolute -top-3 -right-3 bg-primary text-background text-xs font-black px-3 py-1 rounded-full shadow-lg">#1</div>
           </div>
           <div className="text-center">
-            <p className="text-sm font-headline font-black text-primary uppercase italic truncate max-w-[100px]">{top3[0]?.name.split(' ')[0]}</p>
+            <p className="text-sm font-headline font-black text-primary uppercase italic truncate max-w-[100px]">{(top3[0]?.name || '---').split(' ')[0]}</p>
             <p className="text-xs text-on-surface font-bold uppercase tracking-widest">
-              {activeTab === 'xp' ? `${top3[0]?.xp} XP` : `${top3[0]?.monthCheckinCount || 0} Check-ins`}
+              {top3[0] ? (activeTab === 'xp' ? `${top3[0]?.xp} XP` : `${top3[0]?.monthCheckinCount || 0} Check-ins`) : '---'}
             </p>
           </div>
           <div className="w-24 h-32 bg-primary/10 rounded-t-3xl border-x border-t border-primary/20 flex flex-col items-center justify-center">
@@ -113,9 +113,9 @@ export default function Leaderboard() {
             <div className="absolute -top-2 -right-2 bg-secondary/30 text-on-surface text-[10px] font-black px-2 py-0.5 rounded-full">#3</div>
           </div>
           <div className="text-center">
-            <p className="text-xs font-headline font-black text-on-surface uppercase italic truncate max-w-[80px]">{top3[2]?.name.split(' ')[0]}</p>
+            <p className="text-xs font-headline font-black text-on-surface uppercase italic truncate max-w-[80px]">{(top3[2]?.name || '---').split(' ')[0]}</p>
             <p className="text-[10px] text-on-surface-variant font-bold uppercase tracking-widest">
-              {activeTab === 'xp' ? `${top3[2]?.xp} XP` : `${top3[2]?.monthCheckinCount || 0} Check-ins`}
+              {top3[2] ? (activeTab === 'xp' ? `${top3[2]?.xp} XP` : `${top3[2]?.monthCheckinCount || 0} Check-ins`) : '---'}
             </p>
           </div>
           <div className="w-16 h-16 bg-surface-container-low rounded-t-2xl border-x border-t border-outline-variant/10 flex flex-col items-center justify-center">
