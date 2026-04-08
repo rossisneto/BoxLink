@@ -24,39 +24,35 @@ export default function Coach() {
     beginner: '',
   });
 
-  const fetchData = () => {
-    fetch('/api/wods').then(res => res.json()).then(setWods);
-    fetch('/api/coach/athletes').then(res => res.json()).then(setAthletes);
-    fetch('/api/coach/results').then(res => res.json()).then(setResults);
-  };
-
   useEffect(() => {
-    fetchData();
+    const fetchData = async () => {
+      const today = format(new Date(), 'yyyy-MM-dd');
 
-    const channel = supabase
-      .channel('coach_changes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'wods' }, () => fetchData())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'checkins' }, () => fetchData())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'wod_results' }, () => fetchData())
-      .subscribe();
+      const [{ data: wodsData, error: wodsError }, { data: athletesData, error: athletesError }, { data: resultsData, error: resultsError }] = await Promise.all([
+        supabase.from('wods').select('*').order('date', { ascending: false }),
+        supabase.from('checkins').select('*, profiles(name)').eq('date', today).order('timestamp', { ascending: false }),
+        supabase.from('wod_results').select('*, profiles(name), wods(type, name, date)').order('created_at', { ascending: false })
+      ]);
 
-    return () => {
-      supabase.removeChannel(channel);
+      if (wodsError || athletesError || resultsError) {
+        console.error(wodsError || athletesError || resultsError);
+      }
+
+      setWods((wodsData as Wod[]) || []);
+      setAthletes(athletesData || []);
+      setResults(resultsData || []);
     };
+
+    fetchData();
   }, []);
 
   const handleSaveWod = async () => {
     if (!newWod.name || !newWod.date) return;
     
-    const res = await fetch('/api/wods', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(newWod),
-    });
-    
-    if (res.ok) {
-      const data = await res.json();
-      setWods([data, ...wods]);
+    const { data, error } = await supabase.from('wods').insert(newWod).select().single();
+
+    if (!error && data) {
+      setWods([data as Wod, ...wods]);
       alert('WOD Postado com Sucesso!');
       setNewWod({
         date: format(new Date(), 'yyyy-MM-dd'),

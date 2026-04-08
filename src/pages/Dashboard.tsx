@@ -17,42 +17,33 @@ export default function Dashboard() {
   const [selectedClass, setSelectedClass] = useState<string | null>(null);
   const [announcements, setAnnouncements] = useState<string[]>([]);
 
-  const fetchData = () => {
-    fetch('/api/wods')
-      .then(res => res.json())
-      .then(data => setWod(data[0]));
-    
-    fetch('/api/tv-data')
-      .then(res => res.json())
-      .then(data => {
-        if (data.settings?.announcements) {
-          setAnnouncements(data.settings.announcements);
-        }
-      });
-
-    fetch('/api/schedule')
-      .then(res => res.json())
-      .then(data => {
-        setSchedule(data);
-        const now = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', hour12: false });
-        const current = data.find((s: any) => now >= s.time && now <= s.endTime);
-        if (current) setSelectedClass(current.time);
-      });
-  };
-
   useEffect(() => {
-    fetchData();
+    const fetchDashboardData = async () => {
+      const today = new Date().toISOString().split('T')[0];
+      const [{ data: wodData }, { data: settingsData }, { data: scheduleData }] = await Promise.all([
+        supabase.from('wods').select('*').eq('date', today).maybeSingle(),
+        supabase.from('box_settings').select('announcements').single(),
+        supabase.from('schedule').select('time,end_time,coach').eq('is_active', true).order('time', { ascending: true })
+      ]);
 
-    const channel = supabase
-      .channel('dashboard_changes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'schedule' }, () => fetchData())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'wods' }, () => fetchData())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'box_settings' }, () => fetchData())
-      .subscribe();
+      setWod((wodData as Wod) || null);
+      if ((settingsData as any)?.announcements) {
+        setAnnouncements((settingsData as any).announcements);
+      }
 
-    return () => {
-      supabase.removeChannel(channel);
+      const formattedSchedule = ((scheduleData || []) as any[]).map((item) => ({
+        time: item.time,
+        endTime: item.end_time,
+        coach: item.coach,
+      }));
+      setSchedule(formattedSchedule);
+
+      const now = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', hour12: false });
+      const current = formattedSchedule.find((item: any) => now >= item.time && now <= item.endTime);
+      if (current) setSelectedClass(current.time);
     };
+
+    fetchDashboardData();
   }, []);
 
   const handleCheckin = () => {
@@ -64,39 +55,36 @@ export default function Dashboard() {
     setCheckinMessage(null);
 
     navigator.geolocation.getCurrentPosition(
-      async (position) => {
-        const { latitude, longitude } = position.coords;
+      async () => {
         try {
-          const res = await fetch('/api/checkin', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ 
-              userId: user?.id, 
-              lat: latitude, 
-              lng: longitude,
-              classTime: selectedClass
-            }),
+          const { data, error } = await supabase.rpc('perform_daily_checkin', {
+            p_user_id: user?.id,
+            p_class_time: selectedClass,
+            p_timezone: 'America/Sao_Paulo'
           });
-          const data = await res.json();
-          if (res.ok) {
-            setCheckinMessage(`Check-in realizado! +${data.xp} XP, +${data.coins} BrazaCoins`);
+
+          if (!error) {
+            const checkinData = (data || {}) as any;
+            const earnedXp = Number(checkinData.xp || 0);
+            const earnedCoins = Number(checkinData.coins || 0);
+            const levelUp = Boolean(checkinData.levelUp ?? checkinData.level_up);
+            setCheckinMessage(`Check-in realizado! +${earnedXp} XP, +${earnedCoins} BrazaCoins`);
             confetti({ particleCount: 100, spread: 70, origin: { y: 0.6 } });
-            if (data.levelUp) {
+            if (levelUp) {
               setTimeout(() => {
                 confetti({ particleCount: 200, spread: 100, origin: { y: 0.5 }, colors: ['#CAFD00', '#FFFFFF'] });
               }, 500);
             }
-            // Update local user state
-            const updatedUser = { 
-              ...user!, 
-              xp: user!.xp + data.xp, 
-              coins: user!.coins + data.coins, 
-              level: data.levelUp ? (user!.level + 1) : user!.level,
-              checkins: [...user!.checkins, { date: new Date().toISOString().split('T')[0], timestamp: new Date().toISOString(), classTime: selectedClass }] 
+            const updatedUser = {
+              ...user!,
+              xp: user!.xp + earnedXp,
+              coins: user!.coins + earnedCoins,
+              level: levelUp ? (user!.level + 1) : user!.level,
+              checkins: [...user!.checkins, { date: new Date().toISOString().split('T')[0], timestamp: new Date().toISOString(), classTime: selectedClass }]
             };
             updateUser(updatedUser as User);
           } else {
-            setCheckinMessage(data.message);
+            setCheckinMessage('Não foi possível realizar o check-in agora.');
           }
         } catch (e) {
           setCheckinMessage('Erro ao conectar com o servidor');
@@ -122,7 +110,7 @@ export default function Dashboard() {
           <AvatarPreview equipped={user?.avatar.equipped!} size="sm" className="border-2" />
           <div>
             <h1 className="text-2xl font-headline font-black text-on-surface tracking-tight uppercase italic leading-none">
-              OLÁ, <span className="text-primary">{(user?.name || 'Atleta').split(' ')[0]}</span>
+              OLÁ, <span className="text-primary">{user?.name?.split(' ')[0] || 'ATLETA'}</span>
             </h1>
             <p className="text-on-surface-variant text-[10px] font-bold tracking-widest uppercase mt-1 italic">Pronto para o treino?</p>
           </div>
@@ -178,7 +166,7 @@ export default function Dashboard() {
                 >
                   <span className="text-sm font-headline font-black">{s.time}</span>
                   <span className={cn("text-[8px] font-bold uppercase tracking-tighter", selectedClass === s.time ? "text-background/60" : "text-on-surface-variant")}>
-                    {s.coach.split(' ')[0]}
+                    {s.coach?.split(' ')[0] || 'COACH'}
                   </span>
                 </button>
               ))}

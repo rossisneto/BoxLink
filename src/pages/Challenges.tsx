@@ -5,52 +5,79 @@ import { Challenge, User } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { motion, AnimatePresence } from 'framer-motion';
 import confetti from 'canvas-confetti';
+import { supabase } from '../lib/supabase';
 
 export default function Challenges() {
-  const { user, login } = useAuth();
+  const { user, updateUser } = useAuth();
   const [challenges, setChallenges] = useState<Challenge[]>([]);
   const [history, setHistory] = useState<any[]>([]);
   const [activeTab, setActiveTab] = useState<'active' | 'history'>('active');
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    fetch('/api/tv-data')
-      .then(res => res.json())
-      .then(data => setChallenges(data.challenges));
-    
-    if (user) {
-      fetch(`/api/user/history/${user.id}`)
-        .then(res => res.json())
-        .then(data => setHistory(data.filter((h: any) => h.type === 'challenge')));
-    }
+    const fetchData = async () => {
+      const { data: challengeData, error: challengeError } = await supabase
+        .from('challenges')
+        .select('*')
+        .eq('active', true)
+        .order('created_at', { ascending: false });
+
+      if (challengeError) {
+        console.error(challengeError);
+      }
+
+      setChallenges((challengeData as Challenge[]) || []);
+
+      if (user?.id) {
+        const { data: historyData, error: historyError } = await supabase
+          .from('reward_history')
+          .select('*')
+          .eq('user_id', user.id)
+          .eq('type', 'challenge')
+          .order('created_at', { ascending: false });
+
+        if (historyError) {
+          console.error(historyError);
+        }
+
+        setHistory(historyData || []);
+      }
+    };
+
+    fetchData();
   }, [user]);
 
   const handleComplete = async (challengeId: string) => {
     if (!user) return;
     setLoading(true);
     try {
-      const res = await fetch('/api/challenges/complete', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: user.id, challengeId }),
+      const { data, error } = await supabase.rpc('claim_challenge_reward', {
+        p_user_id: user.id,
+        p_challenge_id: challengeId,
+        p_timezone: 'America/Sao_Paulo'
       });
-      const data = await res.json();
-      if (res.ok) {
+
+      if (!error && (data as any)?.success !== false) {
+        const rewardData = (data || {}) as any;
+        const earnedXp = Number(rewardData.xp || 0);
+        const earnedCoins = Number(rewardData.coins || 0);
+        const levelUp = Boolean(rewardData.levelUp ?? rewardData.level_up);
+
         confetti({ particleCount: 100, spread: 70, origin: { y: 0.6 } });
-        if (data.levelUp) {
+        if (levelUp) {
           setTimeout(() => {
             confetti({ particleCount: 200, spread: 100, origin: { y: 0.5 }, colors: ['#CAFD00', '#FFFFFF'] });
           }, 500);
         }
-        // Update local user state
-        const updatedUser = { 
-          ...user, 
-          xp: user.xp + data.xp, 
-          coins: user.coins + data.coins, 
-          level: data.levelUp ? (user.level + 1) : user.level 
+
+        const updatedUser = {
+          ...user,
+          xp: user.xp + earnedXp,
+          coins: user.coins + earnedCoins,
+          level: levelUp ? (user.level + 1) : user.level
         };
-        login(updatedUser as User);
-        alert(`Desafio concluído! +${data.xp} XP e +${data.coins} BrazaCoins!`);
+        updateUser(updatedUser as User);
+        alert(`Desafio concluído! +${earnedXp} XP e +${earnedCoins} BrazaCoins!`);
       }
     } catch (e) {
       console.error(e);
