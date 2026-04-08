@@ -4,6 +4,7 @@ import { cn } from '../lib/utils';
 import { Wod, User } from '../types';
 import { motion, AnimatePresence } from 'framer-motion';
 import { format } from 'date-fns';
+import { supabase } from '../lib/supabase';
 
 export default function Coach() {
   const [wods, setWods] = useState<Wod[]>([]);
@@ -23,10 +24,25 @@ export default function Coach() {
     beginner: '',
   });
 
-  useEffect(() => {
+  const fetchData = () => {
     fetch('/api/wods').then(res => res.json()).then(setWods);
     fetch('/api/coach/athletes').then(res => res.json()).then(setAthletes);
     fetch('/api/coach/results').then(res => res.json()).then(setResults);
+  };
+
+  useEffect(() => {
+    fetchData();
+
+    const channel = supabase
+      .channel('coach_changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'wods' }, () => fetchData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'checkins' }, () => fetchData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'wod_results' }, () => fetchData())
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   const handleSaveWod = async () => {

@@ -43,20 +43,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const fetchUserProfile = async (userId: string) => {
     try {
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', userId)
-        .single();
-
-      if (error) {
-        console.error('Profile fetch failed:', error);
-        if (error.code === 'PGRST116') { // Not found
+      const response = await fetch(`/api/profile/${userId}`);
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        console.error('Profile fetch failed:', response.status, errorData);
+        
+        if (response.status === 404) {
+          console.warn('Profile not found for user:', userId);
           await supabase.auth.signOut();
           setUser(null);
+          return;
         }
-        return;
+        
+        // If it's not a 404, we might want to retry or just show an error
+        throw new Error(errorData.message || 'Erro ao carregar perfil');
       }
+      
+      const data = await response.json().catch(err => {
+        console.error('JSON parse error:', err);
+        throw new Error('Resposta do servidor inválida');
+      });
       
       const mappedUser: User = {
         ...data,
@@ -77,60 +83,59 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const login = async (email: string, password: string) => {
-    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-    const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-    if (!supabaseUrl || !supabaseAnonKey) {
-      return { error: { message: 'Configuração de autenticação ausente. Verifique VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY.' } };
-    }
-
     try {
-      const { error: authError } = await supabase.auth.signInWithPassword({ email, password });
-      if (authError) {
-        const invalidCredentialsMessages = [
-          'Invalid login credentials',
-          'Email not confirmed',
-          'Invalid email or password'
-        ];
-        const isInvalidCredentials = invalidCredentialsMessages.some(msg => authError.message?.includes(msg));
-        if (isInvalidCredentials) {
-          return { error: { message: 'Credenciais inválidas' } };
-        }
-        return { error: { message: authError.message || 'Erro ao autenticar' } };
+      const response = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password })
+      });
+      
+      const data = await response.json();
+      
+      if (!response.ok) {
+        return { error: { message: data.message || 'Erro ao entrar' } };
       }
-
+      
+      // Also sign in the supabase client to get the session for other things
+      const { error: authError } = await supabase.auth.signInWithPassword({ email, password });
+      if (authError) return { error: authError };
+      
+      const mappedUser: User = {
+        ...data,
+        avatar: {
+          equipped: data.avatar_equipped,
+          inventory: data.avatar_inventory
+        },
+        checkins: data.checkins || [],
+        paidBonuses: data.paid_bonuses || []
+      };
+      
+      setUser(mappedUser);
       return { error: null };
     } catch (error: any) {
       console.error('Login error:', error);
-      return { error: { message: 'Falha de rede ao autenticar. Tente novamente.' } };
+      return { error: { message: 'Erro ao conectar com o servidor' } };
     }
   };
 
   const signup = async (email: string, password: string, name: string) => {
     try {
-      const { data, error: authError } = await supabase.auth.signUp({ email, password });
-      if (authError) return { error: authError };
-
-      if (data.user) {
-        const { error: profileError } = await supabase.from('profiles').insert({
-          id: data.user.id,
-          email,
-          name,
-          role: 'athlete',
-          status: 'pending',
-          xp: 0,
-          coins: 0,
-          level: 1
-        });
-        if (profileError) {
-          console.error('Error creating profile:', profileError);
-          return { error: profileError };
-        }
+      const response = await fetch('/api/auth/signup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password, name })
+      });
+      
+      const data = await response.json();
+      
+      if (!response.ok) {
+        return { error: { message: data.message || 'Erro ao cadastrar' } };
       }
       
       return { error: null };
     } catch (error: any) {
       console.error('Signup error:', error);
-      return { error: { message: 'Erro ao realizar cadastro' } };
+      return { error: { message: 'Erro ao conectar com o servidor' } };
     }
   };
 

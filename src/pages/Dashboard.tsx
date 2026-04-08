@@ -6,8 +6,7 @@ import { motion } from 'framer-motion';
 import { Wod, User } from '../types';
 import confetti from 'canvas-confetti';
 import AvatarPreview from '../components/AvatarPreview';
-
-const getFirstWord = (value?: string | null, fallback = 'ATLETA') => value?.trim()?.split(/\s+/)[0] || fallback;
+import { supabase } from '../lib/supabase';
 
 export default function Dashboard() {
   const { user, updateUser } = useAuth();
@@ -18,7 +17,7 @@ export default function Dashboard() {
   const [selectedClass, setSelectedClass] = useState<string | null>(null);
   const [announcements, setAnnouncements] = useState<string[]>([]);
 
-  useEffect(() => {
+  const fetchData = () => {
     fetch('/api/wods')
       .then(res => res.json())
       .then(data => setWod(data[0]));
@@ -30,15 +29,30 @@ export default function Dashboard() {
           setAnnouncements(data.settings.announcements);
         }
       });
+
     fetch('/api/schedule')
       .then(res => res.json())
       .then(data => {
         setSchedule(data);
-        // Auto-select current class if possible
         const now = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', hour12: false });
         const current = data.find((s: any) => now >= s.time && now <= s.endTime);
         if (current) setSelectedClass(current.time);
       });
+  };
+
+  useEffect(() => {
+    fetchData();
+
+    const channel = supabase
+      .channel('dashboard_changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'schedule' }, () => fetchData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'wods' }, () => fetchData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'box_settings' }, () => fetchData())
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   const handleCheckin = () => {
@@ -108,7 +122,7 @@ export default function Dashboard() {
           <AvatarPreview equipped={user?.avatar.equipped!} size="sm" className="border-2" />
           <div>
             <h1 className="text-2xl font-headline font-black text-on-surface tracking-tight uppercase italic leading-none">
-              OLÁ, <span className="text-primary">{getFirstWord(user?.name)}</span>
+              OLÁ, <span className="text-primary">{user?.name.split(' ')[0]}</span>
             </h1>
             <p className="text-on-surface-variant text-[10px] font-bold tracking-widest uppercase mt-1 italic">Pronto para o treino?</p>
           </div>
@@ -164,7 +178,7 @@ export default function Dashboard() {
                 >
                   <span className="text-sm font-headline font-black">{s.time}</span>
                   <span className={cn("text-[8px] font-bold uppercase tracking-tighter", selectedClass === s.time ? "text-background/60" : "text-on-surface-variant")}>
-                    {getFirstWord(s.coach, 'COACH')}
+                    {s.coach.split(' ')[0]}
                   </span>
                 </button>
               ))}

@@ -5,9 +5,6 @@ import { cn } from '../lib/utils';
 import { motion, AnimatePresence } from 'framer-motion';
 import { BoxSettings, User } from '../types';
 
-const getFirstWord = (value?: string | null, fallback = 'ATLETA') => value?.trim()?.split(/\s+/)[0] || fallback;
-const getInitial = (value?: string | null, fallback = '?') => value?.trim()?.charAt(0) || fallback;
-
 export default function MyBox() {
   const { user } = useAuth();
   const [settings, setSettings] = useState<BoxSettings | null>(null);
@@ -115,9 +112,9 @@ export default function MyBox() {
                 #{index + 1}
               </div>
               <div className="w-12 h-12 rounded-full bg-surface-container-highest flex items-center justify-center text-on-surface font-headline font-black text-xl">
-                {getInitial(athlete.name)}
+                {athlete.name[0]}
               </div>
-              <span className="text-[10px] font-headline font-black text-on-surface uppercase italic truncate w-full text-center">{getFirstWord(athlete.name)}</span>
+              <span className="text-[10px] font-headline font-black text-on-surface uppercase italic truncate w-full text-center">{athlete.name.split(' ')[0]}</span>
               <span className="text-[8px] text-on-surface-variant font-bold uppercase tracking-widest">{athlete.xp} XP</span>
             </div>
           ))}
@@ -134,7 +131,7 @@ export default function MyBox() {
             <div key={coach.id} className="bg-surface-container-low p-4 rounded-2xl border border-outline-variant/10 flex items-center justify-between group hover:border-primary/30 transition-all">
               <div className="flex items-center gap-4">
                 <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center text-primary font-headline font-black text-xl">
-                  {getInitial(coach.name)}
+                  {coach.name[0]}
                 </div>
                 <div>
                   <p className="text-on-surface font-bold uppercase text-sm italic">{coach.name}</p>
