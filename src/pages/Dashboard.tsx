@@ -106,7 +106,7 @@ export default function Dashboard() {
           <AvatarPreview equipped={user?.avatar.equipped!} size="sm" className="border-2" />
           <div>
             <h1 className="text-2xl font-headline font-black text-on-surface tracking-tight uppercase italic leading-none">
-              OLÁ, <span className="text-primary">{user?.name.split(' ')[0]}</span>
+              OLÁ, <span className="text-primary">{user?.name?.split(' ')[0] || 'ATLETA'}</span>
             </h1>
             <p className="text-on-surface-variant text-[10px] font-bold tracking-widest uppercase mt-1 italic">Pronto para o treino?</p>
           </div>
