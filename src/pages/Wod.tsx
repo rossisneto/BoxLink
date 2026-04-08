@@ -5,6 +5,7 @@ import { cn } from '../lib/utils';
 import { Wod as WodType } from '../types';
 import { format, addDays, subDays, startOfMonth, endOfMonth, eachDayOfInterval, isSameDay } from 'date-fns';
 import { motion, AnimatePresence } from 'framer-motion';
+import { supabase } from '../lib/supabase';
 
 export default function Wod() {
   const { user } = useAuth();
@@ -16,38 +17,59 @@ export default function Wod() {
   const [newResult, setNewResult] = useState({ result: '', type: 'RX' });
 
   useEffect(() => {
-    fetch('/api/wods')
-      .then(res => res.json())
-      .then(data => {
-        setWods(data);
-        const dateStr = format(selectedDate, 'yyyy-MM-dd');
-        const found = data.find((w: any) => w.date === dateStr);
-        setCurrentWod(found || null);
-        if (found) {
-          fetch(`/api/wods/results/${found.id}`)
-            .then(res => res.json())
-            .then(setResults);
+    const fetchWodData = async () => {
+      const { data: wodsData, error: wodsError } = await supabase.from('wods').select('*').order('date', { ascending: false });
+      if (wodsError) {
+        console.error(wodsError);
+      }
+
+      const fetchedWods = (wodsData as WodType[]) || [];
+      setWods(fetchedWods);
+
+      const dateStr = format(selectedDate, 'yyyy-MM-dd');
+      const found = fetchedWods.find((w: any) => w.date === dateStr);
+      setCurrentWod(found || null);
+
+      if (found) {
+        const { data: resultsData, error: resultsError } = await supabase
+          .from('wod_results')
+          .select('*, profiles(name)')
+          .eq('wod_id', found.id)
+          .order('created_at', { ascending: true });
+
+        if (resultsError) {
+          console.error(resultsError);
         }
-      });
+
+        setResults(resultsData || []);
+      } else {
+        setResults([]);
+      }
+    };
+
+    fetchWodData();
   }, [selectedDate]);
 
   const handleRegisterResult = async () => {
     if (!user || !currentWod || !newResult.result) return;
-    const res = await fetch('/api/wods/results', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        userId: user.id,
-        wodId: currentWod.id,
-        ...newResult
-      }),
+    const { error } = await supabase.from('wod_results').insert({
+      user_id: user.id,
+      wod_id: currentWod.id,
+      result: newResult.result,
+      type: newResult.type
     });
-    if (res.ok) {
+
+    if (!error) {
       setIsRegistering(false);
       setNewResult({ result: '', type: 'RX' });
-      fetch(`/api/wods/results/${currentWod.id}`)
-        .then(res => res.json())
-        .then(setResults);
+      const { data: resultsData } = await supabase
+        .from('wod_results')
+        .select('*, profiles(name)')
+        .eq('wod_id', currentWod.id)
+        .order('created_at', { ascending: true });
+      setResults(resultsData || []);
+    } else {
+      console.error(error);
     }
   };
 

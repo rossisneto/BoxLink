@@ -6,6 +6,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { Item, AvatarSlot } from '../types';
 import AvatarPreview from '../components/AvatarPreview';
+import { supabase } from '../lib/supabase';
 
 const SLOT_ICONS: Record<string, any> = {
   top: Shirt,
@@ -36,12 +37,15 @@ export default function AvatarCustomization() {
   const [selectedSlot, setSelectedSlot] = useState<keyof AvatarSlot | 'all'>('all');
 
   useEffect(() => {
-    fetch('/api/items')
-      .then(res => res.json())
-      .then(data => {
-        setItems(data);
-        setLoading(false);
-      });
+    const loadItems = async () => {
+      const { data, error } = await supabase.from('items').select('*').order('created_at', { ascending: false });
+      if (error) {
+        console.error(error);
+      }
+      setItems((data as Item[]) || []);
+      setLoading(false);
+    };
+    loadItems();
   }, []);
 
   const handleBuy = async (item: Item) => {
@@ -49,18 +53,25 @@ export default function AvatarCustomization() {
     if (user.coins < item.price) return;
 
     try {
-      const res = await fetch('/api/shop/buy', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: user.id, itemId: item.id }),
-      });
-      const data = await res.json();
-      if (data.success) {
+      const currentInventory = user.avatar?.inventory || [];
+      if (currentInventory.includes(item.id)) return;
+      const updatedInventory = [...currentInventory, item.id];
+      const updatedCoins = user.coins - item.price;
+      const { error } = await supabase
+        .from('profiles')
+        .update({
+          coins: updatedCoins,
+          avatar_inventory: updatedInventory,
+        })
+        .eq('id', user.id);
+      if (!error) {
         updateUser({
           ...user,
-          coins: data.coins,
-          avatar: { ...user.avatar, inventory: data.inventory }
+          coins: updatedCoins,
+          avatar: { ...user.avatar, inventory: updatedInventory }
         });
+      } else {
+        console.error(error);
       }
     } catch (err) {
       console.error(err);
@@ -71,17 +82,21 @@ export default function AvatarCustomization() {
     if (!user) return;
 
     try {
-      const res = await fetch('/api/avatar/equip', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: user.id, itemId, slot }),
-      });
-      const data = await res.json();
-      if (data.success) {
+      const equipped = {
+        ...(user.avatar?.equipped || {}),
+        [slot]: itemId
+      };
+      const { error } = await supabase
+        .from('profiles')
+        .update({ avatar_equipped: equipped })
+        .eq('id', user.id);
+      if (!error) {
         updateUser({
           ...user,
-          avatar: { ...user.avatar, equipped: data.equipped }
+          avatar: { ...user.avatar, equipped: equipped as AvatarSlot }
         });
+      } else {
+        console.error(error);
       }
     } catch (err) {
       console.error(err);
