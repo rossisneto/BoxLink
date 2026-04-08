@@ -5,9 +5,10 @@ import { Duel, User } from '../types';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../context/AuthContext';
 import confetti from 'canvas-confetti';
+import { supabase } from '../lib/supabase';
 
 export default function Duels() {
-  const { user, login } = useAuth();
+  const { user, login, updateUser } = useAuth();
   const [duels, setDuels] = useState<Duel[]>([]);
   const [history, setHistory] = useState<any[]>([]);
   const [users, setUsers] = useState<User[]>([]);
@@ -17,39 +18,67 @@ export default function Duels() {
   const [newDuel, setNewDuel] = useState({ opponentId: '', type: 'WOD' });
 
   useEffect(() => {
-    fetch('/api/tv-data')
-      .then(res => res.json())
-      .then(data => setDuels(data.duels));
-    
-    if (user?.id) {
-      fetch(`/api/duels/history/${user.id}`)
-        .then(res => res.json())
-        .then(setHistory);
-    }
+    const fetchDuels = async () => {
+      const { data, error } = await supabase
+        .from('duels')
+        .select('*, challenger:profiles!challenger_id(name), opponent:profiles!opponent_id(name)')
+        .neq('status', 'finished')
+        .order('created_at', { ascending: false });
+      if (error) {
+        console.error(error);
+      }
+      setDuels(((data || []) as any[]).map((d) => ({ ...d, status: d.status === 'accepted' ? 'active' : d.status })));
+    };
 
-    fetch('/api/admin/users')
-      .then(res => res.json())
-      .then(data => setUsers(data.filter((u: User) => u.id !== user?.id && u.status === 'approved')));
+    const fetchHistory = async () => {
+      if (!user?.id) return;
+      const { data, error } = await supabase
+        .from('duels')
+        .select('*, challenger:profiles!challenger_id(name), opponent:profiles!opponent_id(name)')
+        .or(`challenger_id.eq.${user.id},opponent_id.eq.${user.id}`)
+        .eq('status', 'finished')
+        .order('created_at', { ascending: false });
+      if (error) {
+        console.error(error);
+      }
+      setHistory(data || []);
+    };
+
+    const fetchUsers = async () => {
+      const { data, error } = await supabase.from('profiles').select('*').eq('status', 'approved');
+      if (error) {
+        console.error(error);
+      }
+      setUsers(((data || []) as User[]).filter((u: User) => u.id !== user?.id));
+    };
+
+    fetchDuels();
+    fetchHistory();
+    fetchUsers();
   }, [user?.id]);
 
   const handleCreateDuel = async () => {
     if (!user || !newDuel.opponentId) return;
     setLoading(true);
     try {
-      const res = await fetch('/api/duels', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          challengerId: user.id,
-          opponentId: newDuel.opponentId,
-          type: newDuel.type,
-          reward: { xp: 40, coins: 10 }
-        }),
+      const { error } = await supabase.from('duels').insert({
+        challenger_id: user.id,
+        opponent_id: newDuel.opponentId,
+        type: newDuel.type,
+        status: 'pending',
+        reward: { xp: 40, coins: 10 }
       });
-      if (res.ok) {
+      if (!error) {
         setIsChallenging(false);
         alert('Desafio enviado!');
-        fetch('/api/tv-data').then(res => res.json()).then(data => setDuels(data.duels));
+        const { data } = await supabase
+          .from('duels')
+          .select('*, challenger:profiles!challenger_id(name), opponent:profiles!opponent_id(name)')
+          .neq('status', 'finished')
+          .order('created_at', { ascending: false });
+        setDuels(((data || []) as any[]).map((d) => ({ ...d, status: d.status === 'accepted' ? 'active' : d.status })));
+      } else {
+        console.error(error);
       }
     } finally {
       setLoading(false);
@@ -59,13 +88,16 @@ export default function Duels() {
   const handleRespond = async (duelId: string, status: 'accepted' | 'rejected') => {
     setLoading(true);
     try {
-      const res = await fetch('/api/duels/respond', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ duelId, status }),
-      });
-      if (res.ok) {
-        fetch('/api/tv-data').then(res => res.json()).then(data => setDuels(data.duels));
+      const { error } = await supabase.from('duels').update({ status }).eq('id', duelId);
+      if (!error) {
+        const { data } = await supabase
+          .from('duels')
+          .select('*, challenger:profiles!challenger_id(name), opponent:profiles!opponent_id(name)')
+          .neq('status', 'finished')
+          .order('created_at', { ascending: false });
+        setDuels(((data || []) as any[]).map((d) => ({ ...d, status: d.status === 'accepted' ? 'active' : d.status })));
+      } else {
+        console.error(error);
       }
     } finally {
       setLoading(false);
@@ -76,29 +108,43 @@ export default function Duels() {
     if (!user) return;
     setLoading(true);
     try {
-      const res = await fetch('/api/duels/finish', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ duelId, winnerId }),
+      const { data: settleData, error: settleError } = await supabase.rpc('settle_duel_idempotent', {
+        p_duel_id: duelId,
+        p_winner_id: winnerId,
+        p_timezone: 'America/Sao_Paulo',
       });
-      if (res.ok) {
+      if (!settleError && (settleData as any)?.success !== false) {
         const isWinner = user.id === winnerId;
         const xp = isWinner ? 40 : 15;
         const coins = isWinner ? 10 : 0;
         
         confetti({ particleCount: 100, spread: 70, origin: { y: 0.6 } });
-        
-        // Update local user state
-        const updatedUser = { 
-          ...user, 
-          xp: user.xp + xp, 
-          coins: user.coins + coins 
-        };
-        login(updatedUser as User);
-        alert(isWinner ? `Parabéns! Você venceu o duelo! +${xp} XP e +${coins} BrazaCoins!` : `Duelo finalizado! Você ganhou +${xp} XP pela participação.`);
-        
-        // Refresh duels
-        fetch('/api/tv-data').then(res => res.json()).then(data => setDuels(data.duels));
+        const { data: profileData, error: profileError } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', user.id)
+          .single();
+        if (!profileError && profileData) {
+          updateUser({
+            ...profileData,
+            avatar: {
+              equipped: profileData.avatar_equipped,
+              inventory: profileData.avatar_inventory || []
+            },
+            checkins: profileData.checkins || [],
+            paidBonuses: profileData.paid_bonuses || []
+          } as User);
+        }
+
+        alert(isWinner ? `Parabéns! Você venceu o duelo!` : `Duelo finalizado! Obrigado por participar.`);
+        const { data } = await supabase
+          .from('duels')
+          .select('*, challenger:profiles!challenger_id(name), opponent:profiles!opponent_id(name)')
+          .neq('status', 'finished')
+          .order('created_at', { ascending: false });
+        setDuels(((data || []) as any[]).map((d) => ({ ...d, status: d.status === 'accepted' ? 'active' : d.status })));
+      } else {
+        console.error(settleError || settleData);
       }
     } catch (e) {
       console.error(e);

@@ -13,6 +13,7 @@ import {
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { cn } from '../lib/utils';
+import { supabase } from '../lib/supabase';
 
 interface WodResult {
   id: string;
@@ -56,15 +57,19 @@ export default function Progress() {
 
     const fetchData = async () => {
       try {
-        const [wodRes, rewardRes, prRes] = await Promise.all([
-          fetch(`/api/user/wod-history/${user.id}`).then(res => res.json()),
-          fetch(`/api/user/history/${user.id}`).then(res => res.json()),
-          fetch(`/api/user/prs/${user.id}`).then(res => res.json())
+        const [{ data: wodRes, error: wodError }, { data: rewardRes, error: rewardError }, { data: prRes, error: prError }] = await Promise.all([
+          supabase.from('wod_results').select('id, wod_id, result, type, created_at, wods(name, date, type)').eq('user_id', user.id).order('created_at', { ascending: false }),
+          supabase.from('reward_history').select('*').eq('user_id', user.id).order('created_at', { ascending: false }),
+          supabase.from('personal_records').select('id, exercise, value, date').eq('user_id', user.id).order('date', { ascending: false })
         ]);
 
-        setWodHistory(wodRes);
-        setRewardHistory(rewardRes);
-        setPrs(prRes);
+        if (wodError || rewardError || prError) {
+          console.error(wodError || rewardError || prError);
+        }
+
+        setWodHistory((wodRes as WodResult[]) || []);
+        setRewardHistory((rewardRes as RewardHistory[]) || []);
+        setPrs((prRes as PR[]) || []);
       } catch (error) {
         console.error('Error fetching progress data:', error);
       } finally {
