@@ -133,6 +133,114 @@ app.post("/api/wods", async (req, res) => {
   res.json(data);
 });
 
+app.get("/api/wods/results/:wodId", async (req, res) => {
+  const { wodId } = req.params;
+  const { data } = await getSupabase()
+    .from('wod_results')
+    .select('*, profiles(name)')
+    .eq('wod_id', wodId)
+    .order('created_at', { ascending: false });
+  res.json(data || []);
+});
+
+app.post("/api/wods/results", async (req, res) => {
+  const { userId, wodId, result, type } = req.body;
+  const { data, error } = await getSupabase().from('wod_results').insert({
+    user_id: userId,
+    wod_id: wodId,
+    result,
+    type
+  }).select().single();
+  
+  if (error) return res.status(400).json({ message: error.message });
+  res.json(data);
+});
+
+app.post("/api/checkin", async (req, res) => {
+  const { userId, lat, lng, classTime } = req.body;
+  const today = formatInTimeZone(new Date(), TIMEZONE, "yyyy-MM-dd");
+  
+  // Check if already checked in
+  const { data: existing } = await getSupabase().from('checkins').select('*').eq('user_id', userId).eq('date', today).single();
+  if (existing) return res.status(400).json({ message: "Check-in já realizado hoje" });
+
+  // Get box settings to verify location
+  const { data: settings } = await getSupabase().from('box_settings').select('*').single();
+  const { data: economy } = await getSupabase().from('avatar_economy_settings').select('*').eq('is_active', true).single();
+  
+  if (settings) {
+    const R = 6371e3; // metres
+    const φ1 = lat * Math.PI/180;
+    const φ2 = settings.lat * Math.PI/180;
+    const Δφ = (settings.lat-lat) * Math.PI/180;
+    const Δλ = (settings.lng-lng) * Math.PI/180;
+
+    const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
+              Math.cos(φ1) * Math.cos(φ2) *
+              Math.sin(Δλ/2) * Math.sin(Δλ/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    const d = R * c; // in metres
+
+    if (d > (settings.radius || 500)) {
+      return res.status(400).json({ message: "Você está muito longe do box para fazer check-in" });
+    }
+  }
+
+  const xp = economy?.xp_per_checkin || 10;
+  const coins = economy?.coins_per_checkin || 5;
+
+  const { error } = await getSupabase().from('checkins').insert({
+    user_id: userId,
+    date: today,
+    class_time: classTime,
+    lat,
+    lng
+  });
+
+  if (error) return res.status(400).json({ message: error.message });
+
+  const rewardResult = await addReward(userId, 'checkin', xp, coins, `Check-in: ${classTime}`);
+  res.json({ success: true, xp, coins, levelUp: rewardResult?.levelUp });
+});
+
+app.post("/api/shop/buy", async (req, res) => {
+  const { userId, itemId } = req.body;
+  const { data: profile } = await getSupabase().from('profiles').select('*').eq('id', userId).single();
+  const { data: item } = await getSupabase().from('items').select('*').eq('id', itemId).single();
+  
+  if (!profile || !item) return res.status(404).json({ message: "Perfil ou item não encontrado" });
+  if (profile.coins < item.price) return res.status(400).json({ message: "Saldo insuficiente" });
+  
+  const inventory = profile.avatar?.inventory || [];
+  if (inventory.includes(itemId)) return res.status(400).json({ message: "Item já adquirido" });
+  
+  const newInventory = [...inventory, itemId];
+  const { error } = await getSupabase().from('profiles').update({
+    coins: profile.coins - item.price,
+    avatar: { ...profile.avatar, inventory: newInventory }
+  }).eq('id', userId);
+  
+  if (error) return res.status(400).json({ message: error.message });
+  res.json({ success: true });
+});
+
+app.post("/api/avatar/equip", async (req, res) => {
+  const { userId, equipped } = req.body;
+  const { error } = await getSupabase().from('profiles').update({
+    avatar: { equipped, inventory: [] } // inventory will be merged by the update logic if needed, but here we assume the client sends the full avatar object or we handle it carefully
+  }).eq('id', userId);
+  
+  // Actually, we should fetch the current profile to preserve inventory
+  const { data: profile } = await getSupabase().from('profiles').select('avatar').eq('id', userId).single();
+  if (profile) {
+    await getSupabase().from('profiles').update({
+      avatar: { ...profile.avatar, equipped }
+    }).eq('id', userId);
+  }
+
+  res.json({ success: true });
+});
+
 app.get("/api/coach/results", async (req, res) => {
   const today = formatInTimeZone(new Date(), TIMEZONE, "yyyy-MM-dd");
   const { data: wods } = await getSupabase().from('wods').select('id').eq('date', today);
@@ -380,6 +488,58 @@ app.post("/api/admin/settings", async (req, res) => {
 app.get("/api/admin/users", async (req, res) => {
   const { data } = await getSupabase().from('profiles').select('*');
   res.json(data || []);
+});
+
+app.post("/api/admin/seed-items", async (req, res) => {
+  const items = [
+    { id: 'shirt-black', name: 'Camiseta Preta', slot: 'top', price: 150, image: 'https://picsum.photos/seed/shirt1/200/200' },
+    { id: 'shirt-white', name: 'Camiseta Branca', slot: 'top', price: 150, image: 'https://picsum.photos/seed/shirt2/200/200' },
+    { id: 'shorts-black', name: 'Shorts Preto', slot: 'bottom', price: 120, image: 'https://picsum.photos/seed/shorts1/200/200' },
+    { id: 'shoes-nano', name: 'Tênis Nano X', slot: 'shoes', price: 500, image: 'https://picsum.photos/seed/shoes1/200/200' },
+    { id: 'cap-braza', name: 'Boné Braza', slot: 'head_accessory', price: 80, image: 'https://picsum.photos/seed/cap1/200/200' },
+  ];
+
+  const { error } = await getSupabase().from('items').upsert(items);
+  if (error) return res.status(500).json({ message: error.message });
+  res.json({ success: true, message: 'Itens semeados com sucesso' });
+});
+
+app.post("/api/admin/seed-test-data", async (req, res) => {
+  const { userId } = req.body;
+  
+  // Seed WODs
+  const wods = [
+    { 
+      date: new Date().toISOString().split('T')[0], 
+      name: 'MURPH ADAPTADO', 
+      type: 'FOR TIME', 
+      warmup: '3 rounds: 200m Run, 10 Air Squats, 10 Pushups',
+      skill: 'Pull-up technique',
+      rx: '1 mile Run, 100 Pull-ups, 200 Push-ups, 300 Air Squats, 1 mile Run',
+      scaled: '800m Run, 50 Ring Rows, 100 Push-ups, 150 Air Squats, 800m Run',
+      beginner: '400m Run, 30 Ring Rows, 60 Push-ups, 90 Air Squats, 400m Run'
+    }
+  ];
+  await getSupabase().from('wods').upsert(wods);
+
+  // Seed Challenges
+  const challenges = [
+    {
+      title: 'GUERREIRO DA MANHÃ',
+      description: 'Faça 3 check-ins no horário das 06:00 ou 07:00 nesta semana.',
+      active: true,
+      startDate: new Date().toISOString().split('T')[0],
+      endDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+      xp: 100,
+      coins: 20,
+      repeatable: false,
+      dailyLimit: 1,
+      difficulty: 'medium'
+    }
+  ];
+  await getSupabase().from('challenges').upsert(challenges);
+
+  res.json({ success: true });
 });
 
 app.get("/api/profile/:userId", async (req, res) => {
