@@ -18,7 +18,7 @@ Este documento acompanha as tarefas de engenharia e os "Épicos" necessários pa
 
 ### Epic 3: WOD Player Dinâmico
 - [ ] Criar tela Admin onde os Coaches dão inputs para criar a row da tabela `wods`.
-- [ ] Construir os blocos visuais de "Warm Up, Skill, WOD" usando o Framer Motion. 
+- [x] Construir os blocos visuais de "Warm Up, Skill, WOD" usando o Framer Motion. 
 - [ ] Permitir a inserção na tabela `wod_results` vinculada ao usuário após o último passo do WOD. 
 
 ### Epic 4: O "Hub" (Gameficado, Duels e TV)

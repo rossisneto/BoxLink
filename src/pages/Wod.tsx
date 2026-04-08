@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Calendar, Timer, Activity, Trophy, ChevronLeft, ChevronRight, Info, X, Check } from 'lucide-react';
+import { Calendar, Timer, Activity, Trophy, ChevronLeft, ChevronRight, Info, X, Check, Play, Pause, RotateCcw } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { cn } from '../lib/utils';
 import { Wod as WodType } from '../types';
@@ -15,6 +15,25 @@ export default function Wod() {
   const [isRegistering, setIsRegistering] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
   const [newResult, setNewResult] = useState({ result: '', type: 'RX' });
+  const [activeStep, setActiveStep] = useState<'overview' | 'warmup' | 'skill' | 'wod' | 'completion'>('overview');
+  const [timer, setTimer] = useState(0);
+  const [isTimerRunning, setIsTimerRunning] = useState(false);
+
+  useEffect(() => {
+    let interval: any;
+    if (isTimerRunning) {
+      interval = setInterval(() => {
+        setTimer(t => t + 1);
+      }, 1000);
+    }
+    return () => clearInterval(interval);
+  }, [isTimerRunning]);
+
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  };
 
   useEffect(() => {
     fetch('/api/wods')
@@ -176,12 +195,20 @@ export default function Wod() {
               </div>
 
               {/* Action Button */}
-              <button 
-                onClick={() => setIsRegistering(true)}
-                className="w-full bg-primary text-background py-5 rounded-2xl font-headline font-black text-lg shadow-lg uppercase italic tracking-tight flex items-center justify-center gap-2 mt-4"
-              >
-                REGISTRAR RESULTADO <ChevronRight className="w-5 h-5" />
-              </button>
+              {activeStep === 'overview' && (
+                <button 
+                  onClick={() => setActiveStep('warmup')}
+                  className="w-full bg-primary text-background py-5 rounded-3xl font-headline font-black text-lg shadow-[0_0_20px_rgba(202,253,0,0.3)] uppercase italic tracking-tight flex items-center justify-center gap-3 mt-4 group overflow-hidden relative"
+                >
+                  <motion.div 
+                    initial={{ x: '-100%' }}
+                    whileHover={{ x: '100%' }}
+                    transition={{ duration: 0.5, ease: "easeInOut" }}
+                    className="absolute inset-0 bg-white/20 skew-x-12"
+                  />
+                  INICIAR TREINO <Play className="w-6 h-6 fill-current group-hover:scale-110 transition-transform" />
+                </button>
+              )}
             </>
           ) : (
             <div className="bg-surface-container-low p-12 rounded-[2.5rem] border border-outline-variant/10 text-center flex flex-col items-center gap-4">
@@ -248,6 +275,7 @@ export default function Wod() {
           </div>
         )}
       </AnimatePresence>
+
       {/* Success Notification */}
       <AnimatePresence>
         {showSuccess && (
@@ -258,6 +286,210 @@ export default function Wod() {
             className="fixed bottom-24 left-4 right-4 z-50 bg-primary text-background p-4 rounded-2xl shadow-2xl flex items-center justify-center gap-3 font-headline font-black italic"
           >
             <Check className="w-6 h-6" /> RESULTADO SALVO COM SUCESSO!
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* WOD Player Overlay */}
+      <AnimatePresence>
+        {activeStep !== 'overview' && currentWod && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[60] bg-background flex flex-col"
+          >
+            {/* Player Header */}
+            <div className="p-6 flex justify-between items-center border-b border-outline-variant/10">
+              <div className="flex items-center gap-3 text-left">
+                <button 
+                  onClick={() => {
+                    if (window.confirm('Deseja sair do treino? O progresso será perdido.')) {
+                      setActiveStep('overview');
+                      setIsTimerRunning(false);
+                      setTimer(0);
+                    }
+                  }}
+                  className="p-2 hover:bg-surface-container-highest rounded-xl transition-all"
+                >
+                  <X className="w-6 h-6" />
+                </button>
+                <div className="text-left">
+                  <h2 className="font-headline font-black text-xl text-on-surface uppercase italic leading-none">{currentWod.name}</h2>
+                  <p className="text-[10px] text-primary font-black uppercase tracking-widest mt-1">
+                    {activeStep === 'warmup' ? 'AQUECIMENTO' : activeStep === 'skill' ? 'TÉCNICA' : activeStep === 'wod' ? 'EVENTO PRINCIPAL' : 'FINALIZADO'}
+                  </p>
+                </div>
+              </div>
+
+              {activeStep === 'wod' && (
+                <div className="flex flex-col items-end">
+                  <span className="text-2xl font-headline font-black text-primary italic tabular-nums">{formatTime(timer)}</span>
+                  <span className="text-[8px] text-on-surface-variant font-black uppercase tracking-widest">TEMPO DE PROVA</span>
+                </div>
+              )}
+            </div>
+
+            {/* Player Content */}
+            <div className="flex-1 overflow-y-auto p-6 flex flex-col items-center justify-center text-center">
+              <AnimatePresence mode="wait">
+                {activeStep === 'warmup' && (
+                  <motion.div 
+                    key="warmup"
+                    initial={{ opacity: 0, scale: 0.9 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 1.1 }}
+                    className="max-w-md w-full"
+                  >
+                    <Activity className="w-16 h-16 text-primary mx-auto mb-6 opacity-20" />
+                    <h3 className="text-4xl font-headline font-black text-white italic uppercase tracking-tighter mb-8">WARM UP</h3>
+                    <div className="bg-surface-container-low p-8 rounded-[3rem] border border-outline-variant/10 shadow-2xl">
+                      <p className="text-2xl font-headline font-bold text-on-surface leading-snug whitespace-pre-wrap italic">
+                        {currentWod.warmup || 'Prepare seu corpo para o treino.'}
+                      </p>
+                    </div>
+                  </motion.div>
+                )}
+
+                {activeStep === 'skill' && (
+                  <motion.div 
+                    key="skill"
+                    initial={{ opacity: 0, scale: 0.9 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 1.1 }}
+                    className="max-w-md w-full"
+                  >
+                    <Trophy className="w-16 h-16 text-secondary mx-auto mb-6 opacity-20" />
+                    <h3 className="text-4xl font-headline font-black text-white italic uppercase tracking-tighter mb-8">SKILL</h3>
+                    <div className="bg-surface-container-low p-8 rounded-[3rem] border border-outline-variant/10 shadow-2xl">
+                      <h4 className="text-primary text-xs font-black uppercase tracking-widest mb-4">FOCO TÉCNICO</h4>
+                      <p className="text-2xl font-headline font-bold text-on-surface leading-snug whitespace-pre-wrap italic">
+                        {currentWod.skill || 'Trabalhe sua técnica hoje.'}
+                      </p>
+                    </div>
+                  </motion.div>
+                )}
+
+                {activeStep === 'wod' && (
+                  <motion.div 
+                    key="wod"
+                    initial={{ opacity: 0, scale: 0.9 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 1.1 }}
+                    className="max-w-md w-full flex flex-col gap-8"
+                  >
+                    <div className="bg-surface-container-low p-8 rounded-[3rem] border border-outline-variant/10 shadow-2xl relative overflow-hidden">
+                      <div className="absolute top-0 right-0 p-6 opacity-10">
+                        <Timer className="w-24 h-24" />
+                      </div>
+                      <h3 className="text-primary text-xs font-black uppercase tracking-widest mb-4">THE MAIN EVENT</h3>
+                      <h4 className="text-5xl font-headline font-black text-on-surface italic uppercase tracking-tighter mb-4">{currentWod.name}</h4>
+                      <div className="bg-surface-container-highest/50 p-4 rounded-2xl mb-6 inline-block">
+                         <span className="text-secondary text-xs font-black uppercase tracking-[0.2em]">{currentWod.type}</span>
+                      </div>
+                      
+                      <div className="space-y-6 text-left border-t border-outline-variant/10 pt-6">
+                        <div>
+                          <span className="text-primary text-[10px] font-black uppercase tracking-widest block mb-1">RX</span>
+                          <p className="text-on-surface font-bold italic">{currentWod.rx}</p>
+                        </div>
+                        <div>
+                          <span className="text-secondary text-[10px] font-black uppercase tracking-widest block mb-1">SCALED</span>
+                          <p className="text-on-surface font-bold italic">{currentWod.scaled}</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Big Timer Control */}
+                    <div className="flex flex-col items-center gap-6">
+                      <div className="text-8xl font-headline font-black text-white italic tabular-nums tracking-tighter shadow-primary/20 drop-shadow-2xl">
+                        {formatTime(timer)}
+                      </div>
+                      <div className="flex gap-4">
+                        <button 
+                          onClick={() => setIsTimerRunning(!isTimerRunning)}
+                          className={cn(
+                            "w-20 h-20 rounded-3xl flex items-center justify-center transition-all shadow-xl",
+                            isTimerRunning ? "bg-red-500 text-white" : "bg-primary text-background"
+                          )}
+                        >
+                          {isTimerRunning ? <Pause className="w-8 h-8 fill-current" /> : <Play className="w-8 h-8 fill-current ml-1" />}
+                        </button>
+                        <button 
+                          onClick={() => { setTimer(0); setIsTimerRunning(false); }}
+                          className="w-20 h-20 rounded-3xl bg-surface-container-highest text-on-surface border border-outline-variant/10 flex items-center justify-center hover:bg-surface-container-highest/80"
+                        >
+                          <RotateCcw className="w-8 h-8" />
+                        </button>
+                      </div>
+                    </div>
+                  </motion.div>
+                )}
+
+                {activeStep === 'completion' && (
+                  <motion.div 
+                    key="completion"
+                    initial={{ opacity: 0, y: 50 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="max-w-md w-full text-center"
+                  >
+                    <div className="w-32 h-32 rounded-full bg-primary/20 flex items-center justify-center mx-auto mb-8 border-4 border-primary shadow-[0_0_50px_rgba(202,253,0,0.4)]">
+                      <Trophy className="w-16 h-16 text-primary" />
+                    </div>
+                    <h2 className="text-6xl font-headline font-black text-white italic uppercase tracking-tighter mb-4 leading-none">TREINO CONCLUÍDO!</h2>
+                    <p className="text-on-surface-variant text-lg font-bold uppercase tracking-widest mb-12 italic">EXCELENTE PERFORMANCE, ATLETA.</p>
+                    
+                    <button 
+                      onClick={() => {
+                        setIsRegistering(true);
+                      }}
+                      className="w-full bg-primary text-background py-5 rounded-3xl font-headline font-black text-xl shadow-xl uppercase italic tracking-tight"
+                    >
+                      REGISTRAR MEU RESULTADO
+                    </button>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+
+            {/* Player Footer Controls */}
+            <div className="p-8 border-t border-outline-variant/10 bg-surface-container-low/50">
+              {activeStep === 'warmup' && (
+                <button 
+                  onClick={() => setActiveStep('skill')}
+                  className="w-full bg-white text-background py-5 rounded-3xl font-headline font-black text-xl shadow-xl uppercase italic tracking-tight flex items-center justify-center gap-3"
+                >
+                  CONCLUIR AQUECIMENTO <ChevronRight className="w-6 h-6" />
+                </button>
+              )}
+              {activeStep === 'skill' && (
+                <button 
+                  onClick={() => setActiveStep('wod')}
+                  className="w-full bg-secondary text-white py-5 rounded-3xl font-headline font-black text-xl shadow-xl uppercase italic tracking-tight flex items-center justify-center gap-3"
+                >
+                  IR PARA O WOD <ChevronRight className="w-6 h-6" />
+                </button>
+              )}
+              {activeStep === 'wod' && (
+                <button 
+                  onClick={() => {
+                    setIsTimerRunning(false);
+                    setActiveStep('completion');
+                  }}
+                  className="w-full bg-primary text-background py-5 rounded-3xl font-headline font-black text-xl shadow-xl uppercase italic tracking-tight flex items-center justify-center gap-3"
+                >
+                  FINALIZAR TREINO <Check className="w-6 h-6" />
+                </button>
+              )}
+              {activeStep === 'completion' && (
+                <button 
+                  onClick={() => setActiveStep('overview')}
+                  className="w-full bg-surface-container-highest text-on-surface py-5 rounded-3xl font-headline font-bold text-lg uppercase italic tracking-tight"
+                >
+                  VOLTAR AO INÍCIO
+                </button>
+              )}
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
