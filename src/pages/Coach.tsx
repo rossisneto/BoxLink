@@ -6,6 +6,10 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { format } from 'date-fns';
 import { supabase } from '../lib/supabase';
 
+import { formatInTimeZone } from 'date-fns-tz';
+
+const TIMEZONE = "America/Sao_Paulo";
+
 export default function Coach() {
   const [wods, setWods] = useState<Wod[]>([]);
   const [athletes, setAthletes] = useState<any[]>([]);
@@ -24,35 +28,69 @@ export default function Coach() {
     beginner: '',
   });
 
-  useEffect(() => {
-    const fetchData = async () => {
-      const today = format(new Date(), 'yyyy-MM-dd');
+  const fetchData = async () => {
+    const today = formatInTimeZone(new Date(), TIMEZONE, "yyyy-MM-dd");
 
-      const [{ data: wodsData, error: wodsError }, { data: athletesData, error: athletesError }, { data: resultsData, error: resultsError }] = await Promise.all([
-        supabase.from('wods').select('*').order('date', { ascending: false }),
-        supabase.from('checkins').select('*, profiles(name)').eq('date', today).order('timestamp', { ascending: false }),
-        supabase.from('wod_results').select('*, profiles(name), wods(type, name, date)').order('created_at', { ascending: false })
-      ]);
+    // Fetch WODs
+    const { data: wodsData } = await supabase.from('wods').select('*').order('date', { ascending: false });
+    setWods(wodsData || []);
 
-      if (wodsError || athletesError || resultsError) {
-        console.error(wodsError || athletesError || resultsError);
-      }
+    // Fetch Athletes (Check-ins for today)
+    const { data: athletesData } = await supabase
+      .from('checkins')
+      .select('*, profiles(*)')
+      .eq('date', today);
+    setAthletes(athletesData || []);
 
-      setWods((wodsData as Wod[]) || []);
-      setAthletes(athletesData || []);
+    // Fetch Results for today's WODs
+    const { data: todayWods } = await supabase.from('wods').select('id').eq('date', today);
+    if (todayWods && todayWods.length > 0) {
+      const { data: resultsData } = await supabase
+        .from('wod_results')
+        .select('*, profiles(name), wods(*)')
+        .in('wod_id', todayWods.map(w => w.id))
+        .order('created_at', { ascending: false });
       setResults(resultsData || []);
-    };
+    } else {
+      setResults([]);
+    }
+  };
 
+  useEffect(() => {
     fetchData();
+
+    const channel = supabase
+      .channel('coach_changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'wods' }, () => fetchData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'checkins' }, () => fetchData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'wod_results' }, () => fetchData())
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   const handleSaveWod = async () => {
     if (!newWod.name || !newWod.date) return;
     
-    const { data, error } = await supabase.from('wods').insert(newWod).select().single();
-
+    const { data, error } = await supabase
+      .from('wods')
+      .insert({
+        date: newWod.date,
+        name: newWod.name,
+        type: newWod.type,
+        warmup: newWod.warmup,
+        skill: newWod.skill,
+        rx: newWod.rx,
+        scaled: newWod.scaled,
+        beginner: newWod.beginner
+      })
+      .select()
+      .single();
+    
     if (!error && data) {
-      setWods([data as Wod, ...wods]);
+      setWods([data, ...wods]);
       alert('WOD Postado com Sucesso!');
       setNewWod({
         date: format(new Date(), 'yyyy-MM-dd'),
@@ -64,6 +102,9 @@ export default function Coach() {
         scaled: '',
         beginner: '',
       });
+    } else {
+      console.error('Error saving WOD:', error);
+      alert('Erro ao postar WOD: ' + error?.message);
     }
   };
 

@@ -1,10 +1,10 @@
 import { useState, useEffect } from 'react';
 import { Box, MapPin, Users, Trophy, ChevronRight, Info, Phone, Instagram, Globe } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { supabase } from '../lib/supabase';
 import { cn } from '../lib/utils';
 import { motion, AnimatePresence } from 'framer-motion';
 import { BoxSettings, User } from '../types';
-import { supabase } from '../lib/supabase';
 
 export default function MyBox() {
   const { user } = useAuth();
@@ -14,29 +14,31 @@ export default function MyBox() {
 
   useEffect(() => {
     const fetchData = async () => {
-      const [{ data: settingsData, error: settingsError }, { data: usersData, error: usersError }] = await Promise.all([
-        supabase.from('box_settings').select('*').single(),
-        supabase.from('profiles').select('*').eq('status', 'approved')
-      ]);
-
-      if (settingsError || usersError) {
-        console.error(settingsError || usersError);
-      }
-
+      // Fetch box settings
+      const { data: settingsData } = await supabase.from('box_settings').select('*').single();
       if (settingsData) {
         setSettings({
-          ...(settingsData as any),
-          location: {
-            lat: (settingsData as any).location?.lat ?? (settingsData as any).lat,
-            lng: (settingsData as any).location?.lng ?? (settingsData as any).lng,
-          }
-        });
+          ...settingsData,
+          location: { lat: settingsData.lat, lng: settingsData.lng }
+        } as any);
       }
 
-      const allUsers = (usersData || []) as any[];
-      setCoaches(allUsers.filter((u: any) => u.role === 'coach' || u.role === 'admin'));
-      const sorted = [...allUsers].sort((a, b) => (b.xp || 0) - (a.xp || 0));
-      setTopAthletes(sorted.slice(0, 3));
+      // Fetch users (coaches and top athletes)
+      const { data: usersData } = await supabase.from('profiles').select('*');
+      if (usersData) {
+        const allUsers = usersData.map((u: any) => ({
+          ...u,
+          avatar: { equipped: u.avatar_equipped, inventory: u.avatar_inventory },
+          checkins: [],
+          paidBonuses: u.paid_bonuses || []
+        }));
+        
+        setCoaches(allUsers.filter((u: any) => u.role === 'coach' || u.role === 'admin'));
+        
+        // Sort by XP for Wall of Fame
+        const sorted = [...allUsers].sort((a, b) => (b.xp || 0) - (a.xp || 0));
+        setTopAthletes(sorted.slice(0, 3));
+      }
     };
 
     fetchData();
@@ -119,7 +121,7 @@ export default function MyBox() {
               <div className="w-12 h-12 rounded-full bg-surface-container-highest flex items-center justify-center text-on-surface font-headline font-black text-xl">
                 {athlete.name[0]}
               </div>
-              <span className="text-[10px] font-headline font-black text-on-surface uppercase italic truncate w-full text-center">{athlete.name?.split(' ')[0] || 'ATLETA'}</span>
+              <span className="text-[10px] font-headline font-black text-on-surface uppercase italic truncate w-full text-center">{athlete.name.split(' ')[0]}</span>
               <span className="text-[8px] text-on-surface-variant font-bold uppercase tracking-widest">{athlete.xp} XP</span>
             </div>
           ))}

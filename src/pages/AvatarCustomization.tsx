@@ -37,15 +37,12 @@ export default function AvatarCustomization() {
   const [selectedSlot, setSelectedSlot] = useState<keyof AvatarSlot | 'all'>('all');
 
   useEffect(() => {
-    const loadItems = async () => {
-      const { data, error } = await supabase.from('items').select('*').order('created_at', { ascending: false });
-      if (error) {
-        console.error(error);
-      }
-      setItems((data as Item[]) || []);
+    const fetchItems = async () => {
+      const { data } = await supabase.from('items').select('*');
+      setItems(data || []);
       setLoading(false);
     };
-    loadItems();
+    fetchItems();
   }, []);
 
   const handleBuy = async (item: Item) => {
@@ -53,25 +50,24 @@ export default function AvatarCustomization() {
     if (user.coins < item.price) return;
 
     try {
-      const currentInventory = user.avatar?.inventory || [];
-      if (currentInventory.includes(item.id)) return;
-      const updatedInventory = [...currentInventory, item.id];
-      const updatedCoins = user.coins - item.price;
+      const newCoins = user.coins - item.price;
+      const newInventory = [...(user.avatar?.inventory || []), item.id];
+
       const { error } = await supabase
         .from('profiles')
-        .update({
-          coins: updatedCoins,
-          avatar_inventory: updatedInventory,
+        .update({ 
+          coins: newCoins, 
+          avatar_inventory: newInventory,
+          updated_at: new Date().toISOString()
         })
         .eq('id', user.id);
+
       if (!error) {
         updateUser({
           ...user,
-          coins: updatedCoins,
-          avatar: { ...user.avatar, inventory: updatedInventory }
+          coins: newCoins,
+          avatar: { ...user.avatar, inventory: newInventory }
         });
-      } else {
-        console.error(error);
       }
     } catch (err) {
       console.error(err);
@@ -82,21 +78,21 @@ export default function AvatarCustomization() {
     if (!user) return;
 
     try {
-      const equipped = {
-        ...(user.avatar?.equipped || {}),
-        [slot]: itemId
-      };
+      const newEquipped = { ...user.avatar.equipped, [slot]: itemId };
+
       const { error } = await supabase
         .from('profiles')
-        .update({ avatar_equipped: equipped })
+        .update({ 
+          avatar_equipped: newEquipped,
+          updated_at: new Date().toISOString()
+        })
         .eq('id', user.id);
+
       if (!error) {
         updateUser({
           ...user,
-          avatar: { ...user.avatar, equipped: equipped as AvatarSlot }
+          avatar: { ...user.avatar, equipped: newEquipped }
         });
-      } else {
-        console.error(error);
       }
     } catch (err) {
       console.error(err);

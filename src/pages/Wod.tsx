@@ -5,6 +5,7 @@ import { cn } from '../lib/utils';
 import { Wod as WodType } from '../types';
 import { format, addDays, subDays, startOfMonth, endOfMonth, eachDayOfInterval, isSameDay } from 'date-fns';
 import { motion, AnimatePresence } from 'framer-motion';
+
 import { supabase } from '../lib/supabase';
 
 export default function Wod() {
@@ -16,60 +17,50 @@ export default function Wod() {
   const [isRegistering, setIsRegistering] = useState(false);
   const [newResult, setNewResult] = useState({ result: '', type: 'RX' });
 
+  const fetchResults = async (wodId: string) => {
+    const { data } = await supabase
+      .from('wod_results')
+      .select('*, profiles(name)')
+      .eq('wod_id', wodId)
+      .order('created_at', { ascending: false });
+    setResults(data || []);
+  };
+
   useEffect(() => {
-    const fetchWodData = async () => {
-      const { data: wodsData, error: wodsError } = await supabase.from('wods').select('*').order('date', { ascending: false });
-      if (wodsError) {
-        console.error(wodsError);
-      }
-
-      const fetchedWods = (wodsData as WodType[]) || [];
-      setWods(fetchedWods);
-
+    const fetchWods = async () => {
+      const { data } = await supabase.from('wods').select('*');
+      setWods(data || []);
+      
       const dateStr = format(selectedDate, 'yyyy-MM-dd');
-      const found = fetchedWods.find((w: any) => w.date === dateStr);
+      const found = (data || []).find((w: any) => w.date === dateStr);
       setCurrentWod(found || null);
-
       if (found) {
-        const { data: resultsData, error: resultsError } = await supabase
-          .from('wod_results')
-          .select('*, profiles(name)')
-          .eq('wod_id', found.id)
-          .order('created_at', { ascending: true });
-
-        if (resultsError) {
-          console.error(resultsError);
-        }
-
-        setResults(resultsData || []);
+        fetchResults(found.id);
       } else {
         setResults([]);
       }
     };
-
-    fetchWodData();
+    fetchWods();
   }, [selectedDate]);
 
   const handleRegisterResult = async () => {
     if (!user || !currentWod || !newResult.result) return;
-    const { error } = await supabase.from('wod_results').insert({
-      user_id: user.id,
-      wod_id: currentWod.id,
-      result: newResult.result,
-      type: newResult.type
-    });
+    
+    const { error } = await supabase
+      .from('wod_results')
+      .insert({
+        user_id: user.id,
+        wod_id: currentWod.id,
+        result: newResult.result,
+        type: newResult.type
+      });
 
     if (!error) {
       setIsRegistering(false);
       setNewResult({ result: '', type: 'RX' });
-      const { data: resultsData } = await supabase
-        .from('wod_results')
-        .select('*, profiles(name)')
-        .eq('wod_id', currentWod.id)
-        .order('created_at', { ascending: true });
-      setResults(resultsData || []);
+      fetchResults(currentWod.id);
     } else {
-      console.error(error);
+      console.error('Error registering result:', error);
     }
   };
 

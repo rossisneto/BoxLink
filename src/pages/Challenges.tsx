@@ -5,7 +5,9 @@ import { Challenge, User } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { motion, AnimatePresence } from 'framer-motion';
 import confetti from 'canvas-confetti';
+
 import { supabase } from '../lib/supabase';
+import { addReward } from '../utils/rewards';
 
 export default function Challenges() {
   const { user, updateUser } = useAuth();
@@ -14,73 +16,86 @@ export default function Challenges() {
   const [activeTab, setActiveTab] = useState<'active' | 'history'>('active');
   const [loading, setLoading] = useState(false);
 
-  useEffect(() => {
-    const fetchData = async () => {
-      const { data: challengeData, error: challengeError } = await supabase
-        .from('challenges')
+  const fetchData = async () => {
+    // Fetch Challenges
+    const { data: challengesData } = await supabase.from('challenges').select('*').eq('active', true);
+    if (challengesData) setChallenges(challengesData);
+    
+    if (user) {
+      // Fetch History
+      const { data: historyData } = await supabase
+        .from('reward_history')
         .select('*')
-        .eq('active', true)
+        .eq('user_id', user.id)
+        .eq('type', 'challenge')
         .order('created_at', { ascending: false });
+      
+      if (historyData) setHistory(historyData);
+    }
+  };
 
-      if (challengeError) {
-        console.error(challengeError);
-      }
-
-      setChallenges((challengeData as Challenge[]) || []);
-
-      if (user?.id) {
-        const { data: historyData, error: historyError } = await supabase
-          .from('reward_history')
-          .select('*')
-          .eq('user_id', user.id)
-          .eq('type', 'challenge')
-          .order('created_at', { ascending: false });
-
-        if (historyError) {
-          console.error(historyError);
-        }
-
-        setHistory(historyData || []);
-      }
-    };
-
+  useEffect(() => {
     fetchData();
-  }, [user]);
+  }, [user?.id]);
 
   const handleComplete = async (challengeId: string) => {
     if (!user) return;
     setLoading(true);
     try {
-      const { data, error } = await supabase.rpc('claim_challenge_reward', {
-        p_user_id: user.id,
-        p_challenge_id: challengeId,
-        p_timezone: 'America/Sao_Paulo'
-      });
+      const challenge = challenges.find(c => c.id === challengeId);
+      if (!challenge) throw new Error('Desafio não encontrado');
 
-      if (!error && (data as any)?.success !== false) {
-        const rewardData = (data || {}) as any;
-        const earnedXp = Number(rewardData.xp || 0);
-        const earnedCoins = Number(rewardData.coins || 0);
-        const levelUp = Boolean(rewardData.levelUp ?? rewardData.level_up);
+      // Check if already completed (if not repeatable)
+      if (!challenge.repeatable) {
+        const alreadyDone = history.some(h => h.challenge_id === challengeId);
+        if (alreadyDone) {
+          alert('Você já concluiu este desafio!');
+          setLoading(false);
+          return;
+        }
+      } else {
+        // Check daily limit
+        const today = new Date().toISOString().split('T')[0];
+        const todayCompletions = history.filter(h => h.challenge_id === challengeId && h.created_at.startsWith(today));
+        if (todayCompletions.length >= (challenge.dailyLimit || 1)) {
+          alert('Você já atingiu o limite diário para este desafio!');
+          setLoading(false);
+          return;
+        }
+      }
 
+      // Add Reward
+      const rewardResult = await addReward(user.id, 'challenge', challenge.xp, challenge.coins, `Desafio: ${challenge.title}`, challengeId);
+      
+      if (rewardResult) {
         confetti({ particleCount: 100, spread: 70, origin: { y: 0.6 } });
-        if (levelUp) {
+        if (rewardResult.levelUp) {
           setTimeout(() => {
             confetti({ particleCount: 200, spread: 100, origin: { y: 0.5 }, colors: ['#CAFD00', '#FFFFFF'] });
           }, 500);
         }
 
-        const updatedUser = {
-          ...user,
-          xp: user.xp + earnedXp,
-          coins: user.coins + earnedCoins,
-          level: levelUp ? (user.level + 1) : user.level
-        };
-        updateUser(updatedUser as User);
-        alert(`Desafio concluído! +${earnedXp} XP e +${earnedCoins} BrazaCoins!`);
+        // Refresh user profile
+        const { data: updatedProfile } = await supabase.from('profiles').select('*, checkins(*)').eq('id', user.id).single();
+        if (updatedProfile) {
+          const mappedUser: User = {
+            ...updatedProfile,
+            avatar: {
+              equipped: updatedProfile.avatar_equipped,
+              inventory: updatedProfile.avatar_inventory
+            },
+            checkins: updatedProfile.checkins || [],
+            paidBonuses: updatedProfile.paid_bonuses || []
+          };
+          updateUser(mappedUser);
+        }
+        
+        alert(`Desafio concluído! +${challenge.xp} XP e +${challenge.coins} BrazaCoins!`);
+        fetchData(); // Refresh history
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
+      alert('Erro ao concluir desafio: ' + (e.message || 'Erro desconhecido'));
     } finally {
       setLoading(false);
     }

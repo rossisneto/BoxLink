@@ -5,10 +5,12 @@ import { Duel, User } from '../types';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../context/AuthContext';
 import confetti from 'canvas-confetti';
+
 import { supabase } from '../lib/supabase';
+import { addReward } from '../utils/rewards';
 
 export default function Duels() {
-  const { user, updateUser } = useAuth();
+  const { user, login } = useAuth();
   const [duels, setDuels] = useState<Duel[]>([]);
   const [history, setHistory] = useState<any[]>([]);
   const [users, setUsers] = useState<User[]>([]);
@@ -17,68 +19,79 @@ export default function Duels() {
   const [loading, setLoading] = useState(false);
   const [newDuel, setNewDuel] = useState({ opponentId: '', type: 'WOD' });
 
+  const fetchDuels = async () => {
+    const { data } = await supabase
+      .from('duels')
+      .select('*, challenger:profiles!challenger_id(name), opponent:profiles!opponent_id(name)')
+      .neq('status', 'finished');
+    
+    setDuels((data || []).map(d => ({
+      ...d,
+      challengerName: d.challenger?.name || 'Atleta',
+      opponentName: d.opponent?.name || 'Atleta',
+      reward: { xp: d.reward_xp, coins: d.reward_coins }
+    })));
+  };
+
+  const fetchHistory = async () => {
+    if (!user?.id) return;
+    const { data } = await supabase
+      .from('duels')
+      .select('*, challenger:profiles!challenger_id(*), opponent:profiles!opponent_id(*)')
+      .or(`challenger_id.eq.${user.id},opponent_id.eq.${user.id}`)
+      .eq('status', 'finished')
+      .order('created_at', { ascending: false });
+    
+    setHistory((data || []).map(d => ({
+      ...d,
+      reward: { xp: d.reward_xp, coins: d.reward_coins }
+    })));
+  };
+
+  const fetchUsers = async () => {
+    const { data } = await supabase
+      .from('profiles')
+      .select('*')
+      .neq('id', user?.id)
+      .eq('status', 'approved');
+    setUsers(data || []);
+  };
+
   useEffect(() => {
-    const fetchDuels = async () => {
-      const { data, error } = await supabase
-        .from('duels')
-        .select('*, challenger:profiles!challenger_id(name), opponent:profiles!opponent_id(name)')
-        .neq('status', 'finished')
-        .order('created_at', { ascending: false });
-      if (error) {
-        console.error(error);
-      }
-      setDuels(((data || []) as any[]).map((d) => ({ ...d, status: d.status === 'accepted' ? 'active' : d.status })));
-    };
-
-    const fetchHistory = async () => {
-      if (!user?.id) return;
-      const { data, error } = await supabase
-        .from('duels')
-        .select('*, challenger:profiles!challenger_id(name), opponent:profiles!opponent_id(name)')
-        .or(`challenger_id.eq.${user.id},opponent_id.eq.${user.id}`)
-        .eq('status', 'finished')
-        .order('created_at', { ascending: false });
-      if (error) {
-        console.error(error);
-      }
-      setHistory(data || []);
-    };
-
-    const fetchUsers = async () => {
-      const { data, error } = await supabase.from('profiles').select('*').eq('status', 'approved');
-      if (error) {
-        console.error(error);
-      }
-      setUsers(((data || []) as User[]).filter((u: User) => u.id !== user?.id));
-    };
-
     fetchDuels();
     fetchHistory();
     fetchUsers();
+
+    const channel = supabase.channel('duels_changes')
+      .on('postgres_changes', { event: '*', table: 'duels' }, () => {
+        fetchDuels();
+        fetchHistory();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [user?.id]);
 
   const handleCreateDuel = async () => {
     if (!user || !newDuel.opponentId) return;
     setLoading(true);
     try {
-      const { error } = await supabase.from('duels').insert({
-        challenger_id: user.id,
-        opponent_id: newDuel.opponentId,
-        type: newDuel.type,
-        status: 'pending',
-        reward: { xp: 40, coins: 10 }
-      });
+      const { error } = await supabase
+        .from('duels')
+        .insert({
+          challenger_id: user.id,
+          opponent_id: newDuel.opponentId,
+          type: newDuel.type,
+          reward_xp: 40,
+          reward_coins: 10,
+          status: 'pending'
+        });
+
       if (!error) {
         setIsChallenging(false);
         alert('Desafio enviado!');
-        const { data } = await supabase
-          .from('duels')
-          .select('*, challenger:profiles!challenger_id(name), opponent:profiles!opponent_id(name)')
-          .neq('status', 'finished')
-          .order('created_at', { ascending: false });
-        setDuels(((data || []) as any[]).map((d) => ({ ...d, status: d.status === 'accepted' ? 'active' : d.status })));
-      } else {
-        console.error(error);
       }
     } finally {
       setLoading(false);
@@ -88,17 +101,10 @@ export default function Duels() {
   const handleRespond = async (duelId: string, status: 'accepted' | 'rejected') => {
     setLoading(true);
     try {
-      const { error } = await supabase.from('duels').update({ status }).eq('id', duelId);
-      if (!error) {
-        const { data } = await supabase
-          .from('duels')
-          .select('*, challenger:profiles!challenger_id(name), opponent:profiles!opponent_id(name)')
-          .neq('status', 'finished')
-          .order('created_at', { ascending: false });
-        setDuels(((data || []) as any[]).map((d) => ({ ...d, status: d.status === 'accepted' ? 'active' : d.status })));
-      } else {
-        console.error(error);
-      }
+      await supabase
+        .from('duels')
+        .update({ status })
+        .eq('id', duelId);
     } finally {
       setLoading(false);
     }
@@ -108,42 +114,35 @@ export default function Duels() {
     if (!user) return;
     setLoading(true);
     try {
-      const { data: settleData, error: settleError } = await supabase.rpc('settle_duel_idempotent', {
-        p_duel_id: duelId,
-        p_winner_id: winnerId,
-        p_timezone: 'America/Sao_Paulo',
-      });
-      if (!settleError && (settleData as any)?.success !== false) {
-        const isWinner = user.id === winnerId;
-        
-        confetti({ particleCount: 100, spread: 70, origin: { y: 0.6 } });
+      const { data: duel } = await supabase.from('duels').select('*').eq('id', duelId).single();
+      if (!duel) return;
 
-        const { data: profileData, error: profileError } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('id', user.id)
-          .single();
-        if (!profileError && profileData) {
-          updateUser({
-            ...profileData,
-            avatar: {
-              equipped: profileData.avatar_equipped,
-              inventory: profileData.avatar_inventory || []
-            },
-            checkins: profileData.checkins || [],
-            paidBonuses: profileData.paid_bonuses || []
-          } as User);
-        }
+      await supabase
+        .from('duels')
+        .update({ status: 'finished', winner_id: winnerId })
+        .eq('id', duelId);
 
-        alert(isWinner ? `Parabéns! Você venceu o duelo!` : `Duelo finalizado! Obrigado por participar.`);
-        const { data } = await supabase
-          .from('duels')
-          .select('*, challenger:profiles!challenger_id(name), opponent:profiles!opponent_id(name)')
-          .neq('status', 'finished')
-          .order('created_at', { ascending: false });
-        setDuels(((data || []) as any[]).map((d) => ({ ...d, status: d.status === 'accepted' ? 'active' : d.status })));
-      } else {
-        console.error(settleError || settleData);
+      const isWinner = user.id === winnerId;
+      const xp = isWinner ? 40 : 15;
+      const coins = isWinner ? 10 : 0;
+      
+      confetti({ particleCount: 100, spread: 70, origin: { y: 0.6 } });
+      
+      await addReward(user.id, 'duel', xp, coins, isWinner ? "Vitória em duelo" : "Participação em duelo");
+      
+      // Also award the other participant
+      const otherId = duel.challenger_id === user.id ? duel.opponent_id : duel.challenger_id;
+      const otherIsWinner = otherId === winnerId;
+      const otherXp = otherIsWinner ? 40 : 15;
+      const otherCoins = otherIsWinner ? 10 : 0;
+      await addReward(otherId, 'duel', otherXp, otherCoins, otherIsWinner ? "Vitória em duelo" : "Participação em duelo");
+
+      alert(isWinner ? `Parabéns! Você venceu o duelo! +${xp} XP e +${coins} BrazaCoins!` : `Duelo finalizado! Você ganhou +${xp} XP pela participação.`);
+      
+      // Refresh user data locally
+      const { data: updatedProfile } = await supabase.from('profiles').select('*').eq('id', user.id).single();
+      if (updatedProfile) {
+        login(updatedProfile as User);
       }
     } catch (e) {
       console.error(e);

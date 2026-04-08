@@ -45,16 +45,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       const { data, error } = await supabase
         .from('profiles')
-        .select('*')
+        .select('*, checkins(*)')
         .eq('id', userId)
-        .single();
+        .maybeSingle();
 
-      if (error) {
-        console.error('Profile fetch failed:', error);
-        if (error.code === 'PGRST116') { // Not found
-          await supabase.auth.signOut();
-          setUser(null);
-        }
+      if (error) throw error;
+      
+      if (!data) {
+        console.warn('Profile not found for user:', userId);
+        await supabase.auth.signOut();
+        setUser(null);
         return;
       }
       
@@ -77,60 +77,39 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const login = async (email: string, password: string) => {
-    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-    const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-    if (!supabaseUrl || !supabaseAnonKey) {
-      return { error: { message: 'Configuração de autenticação ausente. Verifique VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY.' } };
-    }
-
     try {
-      const { error: authError } = await supabase.auth.signInWithPassword({ email, password });
-      if (authError) {
-        const invalidCredentialsMessages = [
-          'Invalid login credentials',
-          'Email not confirmed',
-          'Invalid email or password'
-        ];
-        const isInvalidCredentials = invalidCredentialsMessages.some(msg => authError.message?.includes(msg));
-        if (isInvalidCredentials) {
-          return { error: { message: 'Credenciais inválidas' } };
-        }
-        return { error: { message: authError.message || 'Erro ao autenticar' } };
+      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({ email, password });
+      if (authError) return { error: authError };
+      
+      if (authData.user) {
+        await fetchUserProfile(authData.user.id);
       }
-
+      
       return { error: null };
     } catch (error: any) {
       console.error('Login error:', error);
-      return { error: { message: 'Falha de rede ao autenticar. Tente novamente.' } };
+      return { error: { message: 'Erro ao conectar com o Supabase' } };
     }
   };
 
   const signup = async (email: string, password: string, name: string) => {
     try {
-      const { data, error: authError } = await supabase.auth.signUp({ email, password });
-      if (authError) return { error: authError };
-
-      if (data.user) {
-        const { error: profileError } = await supabase.from('profiles').insert({
-          id: data.user.id,
-          email,
-          name,
-          role: 'athlete',
-          status: 'pending',
-          xp: 0,
-          coins: 0,
-          level: 1
-        });
-        if (profileError) {
-          console.error('Error creating profile:', profileError);
-          return { error: profileError };
+      const { data: authData, error: authError } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: {
+            name: name
+          }
         }
-      }
+      });
+      
+      if (authError) return { error: authError };
       
       return { error: null };
     } catch (error: any) {
       console.error('Signup error:', error);
-      return { error: { message: 'Erro ao realizar cadastro' } };
+      return { error: { message: 'Erro ao conectar com o Supabase' } };
     }
   };
 

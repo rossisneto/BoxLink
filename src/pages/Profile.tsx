@@ -6,6 +6,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { RewardEvent, PersonalRecord } from '../types';
 import AvatarPreview from '../components/AvatarPreview';
+
 import { supabase } from '../lib/supabase';
 
 export default function Profile() {
@@ -13,31 +14,41 @@ export default function Profile() {
   const navigate = useNavigate();
   const [history, setHistory] = useState<RewardEvent[]>([]);
   const [prs, setPrs] = useState<PersonalRecord[]>([]);
+  const [checkinCount, setCheckinCount] = useState(0);
   const [isPrModalOpen, setIsPrModalOpen] = useState(false);
   const [newPr, setNewPr] = useState({ exercise: '', value: '', date: new Date().toISOString().split('T')[0] });
 
   useEffect(() => {
-    const fetchProfileData = async () => {
-      if (!user?.id) return;
+    if (user?.id) {
+      const fetchData = async () => {
+        // Fetch History
+        const { data: historyData } = await supabase
+          .from('reward_history')
+          .select('*')
+          .eq('user_id', user.id)
+          .order('created_at', { ascending: false });
+        setHistory((historyData || []).map(h => ({
+          ...h,
+          createdAt: h.created_at
+        })));
 
-      const [{ data: historyData, error: historyError }, { data: prsData, error: prsError }] = await Promise.all([
-        supabase.from('reward_history').select('*').eq('user_id', user.id).order('created_at', { ascending: false }),
-        supabase.from('personal_records').select('*').eq('user_id', user.id).order('date', { ascending: false })
-      ]);
+        // Fetch PRs
+        const { data: prsData } = await supabase
+          .from('personal_records')
+          .select('*')
+          .eq('user_id', user.id)
+          .order('date', { ascending: false });
+        setPrs(prsData || []);
 
-      if (historyError || prsError) {
-        console.error(historyError || prsError);
-      }
-
-      setHistory((historyData || []).map((event: any) => ({
-        ...event,
-        userId: event.user_id,
-        createdAt: event.created_at
-      })));
-      setPrs((prsData as PersonalRecord[]) || []);
-    };
-
-    fetchProfileData();
+        // Fetch Checkin Count
+        const { count } = await supabase
+          .from('checkins')
+          .select('*', { count: 'exact', head: true })
+          .eq('user_id', user.id);
+        setCheckinCount(count || 0);
+      };
+      fetchData();
+    }
   }, [user?.id]);
 
   const handleLogout = () => {
@@ -46,15 +57,16 @@ export default function Profile() {
   };
 
   const handleAddPr = async () => {
-    if (!newPr.exercise || !newPr.value) return;
-    if (!user?.id) return;
-
-    const { error } = await supabase.from('personal_records').insert({
-      user_id: user.id,
-      exercise: newPr.exercise,
-      value: newPr.value,
-      date: newPr.date
-    });
+    if (!user || !newPr.exercise || !newPr.value) return;
+    
+    const { error } = await supabase
+      .from('personal_records')
+      .insert({
+        user_id: user.id,
+        exercise: newPr.exercise,
+        value: newPr.value,
+        date: newPr.date
+      });
 
     if (!error) {
       const { data } = await supabase
@@ -62,11 +74,9 @@ export default function Profile() {
         .select('*')
         .eq('user_id', user.id)
         .order('date', { ascending: false });
-      setPrs((data as PersonalRecord[]) || []);
+      setPrs(data || []);
       setIsPrModalOpen(false);
       setNewPr({ exercise: '', value: '', date: new Date().toISOString().split('T')[0] });
-    } else {
-      console.error(error);
     }
   };
 
@@ -133,7 +143,7 @@ export default function Profile() {
       {/* Stats Grid */}
       <section className="grid grid-cols-3 gap-4">
         {[
-          { icon: Calendar, label: 'Check-ins', value: user?.checkins.length },
+          { icon: Calendar, label: 'Check-ins', value: checkinCount },
           { icon: Activity, label: 'Recordes', value: prs.length },
           { icon: Trophy, label: 'Vitórias', value: '0' },
         ].map((stat) => (
