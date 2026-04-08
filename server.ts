@@ -8,7 +8,13 @@ import { formatInTimeZone } from "date-fns-tz";
 import cors from "cors";
 import bodyParser from "body-parser";
 
-dotenv.config();
+import fs from "fs";
+
+if (fs.existsSync(".env.local")) {
+  dotenv.config({ path: ".env.local" });
+} else {
+  dotenv.config();
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
