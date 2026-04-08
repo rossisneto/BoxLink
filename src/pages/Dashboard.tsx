@@ -6,6 +6,7 @@ import { motion } from 'framer-motion';
 import { Wod, User } from '../types';
 import confetti from 'canvas-confetti';
 import AvatarPreview from '../components/AvatarPreview';
+import { supabase } from '../lib/supabase';
 
 export default function Dashboard() {
   const { user, updateUser } = useAuth();
@@ -17,26 +18,32 @@ export default function Dashboard() {
   const [announcements, setAnnouncements] = useState<string[]>([]);
 
   useEffect(() => {
-    fetch('/api/wods')
-      .then(res => res.json())
-      .then(data => setWod(data[0]));
-    
-    fetch('/api/tv-data')
-      .then(res => res.json())
-      .then(data => {
-        if (data.settings?.announcements) {
-          setAnnouncements(data.settings.announcements);
-        }
-      });
-    fetch('/api/schedule')
-      .then(res => res.json())
-      .then(data => {
-        setSchedule(data);
-        // Auto-select current class if possible
-        const now = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', hour12: false });
-        const current = data.find((s: any) => now >= s.time && now <= s.endTime);
-        if (current) setSelectedClass(current.time);
-      });
+    const fetchDashboardData = async () => {
+      const today = new Date().toISOString().split('T')[0];
+      const [{ data: wodData }, { data: settingsData }, { data: scheduleData }] = await Promise.all([
+        supabase.from('wods').select('*').eq('date', today).maybeSingle(),
+        supabase.from('box_settings').select('announcements').single(),
+        supabase.from('schedule').select('time,end_time,coach').eq('is_active', true).order('time', { ascending: true })
+      ]);
+
+      setWod((wodData as Wod) || null);
+      if ((settingsData as any)?.announcements) {
+        setAnnouncements((settingsData as any).announcements);
+      }
+
+      const formattedSchedule = ((scheduleData || []) as any[]).map((item) => ({
+        time: item.time,
+        endTime: item.end_time,
+        coach: item.coach,
+      }));
+      setSchedule(formattedSchedule);
+
+      const now = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', hour12: false });
+      const current = formattedSchedule.find((item: any) => now >= item.time && now <= item.endTime);
+      if (current) setSelectedClass(current.time);
+    };
+
+    fetchDashboardData();
   }, []);
 
   const handleCheckin = () => {
@@ -48,39 +55,36 @@ export default function Dashboard() {
     setCheckinMessage(null);
 
     navigator.geolocation.getCurrentPosition(
-      async (position) => {
-        const { latitude, longitude } = position.coords;
+      async () => {
         try {
-          const res = await fetch('/api/checkin', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ 
-              userId: user?.id, 
-              lat: latitude, 
-              lng: longitude,
-              classTime: selectedClass
-            }),
+          const { data, error } = await supabase.rpc('perform_daily_checkin', {
+            p_user_id: user?.id,
+            p_class_time: selectedClass,
+            p_timezone: 'America/Sao_Paulo'
           });
-          const data = await res.json();
-          if (res.ok) {
-            setCheckinMessage(`Check-in realizado! +${data.xp} XP, +${data.coins} BrazaCoins`);
+
+          if (!error) {
+            const checkinData = (data || {}) as any;
+            const earnedXp = Number(checkinData.xp || 0);
+            const earnedCoins = Number(checkinData.coins || 0);
+            const levelUp = Boolean(checkinData.levelUp ?? checkinData.level_up);
+            setCheckinMessage(`Check-in realizado! +${earnedXp} XP, +${earnedCoins} BrazaCoins`);
             confetti({ particleCount: 100, spread: 70, origin: { y: 0.6 } });
-            if (data.levelUp) {
+            if (levelUp) {
               setTimeout(() => {
                 confetti({ particleCount: 200, spread: 100, origin: { y: 0.5 }, colors: ['#CAFD00', '#FFFFFF'] });
               }, 500);
             }
-            // Update local user state
-            const updatedUser = { 
-              ...user!, 
-              xp: user!.xp + data.xp, 
-              coins: user!.coins + data.coins, 
-              level: data.levelUp ? (user!.level + 1) : user!.level,
-              checkins: [...user!.checkins, { date: new Date().toISOString().split('T')[0], timestamp: new Date().toISOString(), classTime: selectedClass }] 
+            const updatedUser = {
+              ...user!,
+              xp: user!.xp + earnedXp,
+              coins: user!.coins + earnedCoins,
+              level: levelUp ? (user!.level + 1) : user!.level,
+              checkins: [...user!.checkins, { date: new Date().toISOString().split('T')[0], timestamp: new Date().toISOString(), classTime: selectedClass }]
             };
             updateUser(updatedUser as User);
           } else {
-            setCheckinMessage(data.message);
+            setCheckinMessage('Não foi possível realizar o check-in agora.');
           }
         } catch (e) {
           setCheckinMessage('Erro ao conectar com o servidor');
@@ -162,7 +166,7 @@ export default function Dashboard() {
                 >
                   <span className="text-sm font-headline font-black">{s.time}</span>
                   <span className={cn("text-[8px] font-bold uppercase tracking-tighter", selectedClass === s.time ? "text-background/60" : "text-on-surface-variant")}>
-                    {s.coach.split(' ')[0]}
+                    {s.coach?.split(' ')[0] || 'COACH'}
                   </span>
                 </button>
               ))}

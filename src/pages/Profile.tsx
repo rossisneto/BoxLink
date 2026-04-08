@@ -6,6 +6,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { RewardEvent, PersonalRecord } from '../types';
 import AvatarPreview from '../components/AvatarPreview';
+import { supabase } from '../lib/supabase';
 
 export default function Profile() {
   const { user, logout } = useAuth();
@@ -16,14 +17,27 @@ export default function Profile() {
   const [newPr, setNewPr] = useState({ exercise: '', value: '', date: new Date().toISOString().split('T')[0] });
 
   useEffect(() => {
-    if (user?.id) {
-      fetch(`/api/user/history/${user.id}`)
-        .then(res => res.json())
-        .then(setHistory);
-      fetch(`/api/user/prs/${user.id}`)
-        .then(res => res.json())
-        .then(setPrs);
-    }
+    const fetchProfileData = async () => {
+      if (!user?.id) return;
+
+      const [{ data: historyData, error: historyError }, { data: prsData, error: prsError }] = await Promise.all([
+        supabase.from('reward_history').select('*').eq('user_id', user.id).order('created_at', { ascending: false }),
+        supabase.from('personal_records').select('*').eq('user_id', user.id).order('date', { ascending: false })
+      ]);
+
+      if (historyError || prsError) {
+        console.error(historyError || prsError);
+      }
+
+      setHistory((historyData || []).map((event: any) => ({
+        ...event,
+        userId: event.user_id,
+        createdAt: event.created_at
+      })));
+      setPrs((prsData as PersonalRecord[]) || []);
+    };
+
+    fetchProfileData();
   }, [user?.id]);
 
   const handleLogout = () => {
@@ -33,16 +47,26 @@ export default function Profile() {
 
   const handleAddPr = async () => {
     if (!newPr.exercise || !newPr.value) return;
-    const res = await fetch('/api/user/prs', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId: user?.id, ...newPr }),
+    if (!user?.id) return;
+
+    const { error } = await supabase.from('personal_records').insert({
+      user_id: user.id,
+      exercise: newPr.exercise,
+      value: newPr.value,
+      date: newPr.date
     });
-    if (res.ok) {
-      const data = await res.json();
-      setPrs(data);
+
+    if (!error) {
+      const { data } = await supabase
+        .from('personal_records')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('date', { ascending: false });
+      setPrs((data as PersonalRecord[]) || []);
       setIsPrModalOpen(false);
       setNewPr({ exercise: '', value: '', date: new Date().toISOString().split('T')[0] });
+    } else {
+      console.error(error);
     }
   };
 
