@@ -16,6 +16,8 @@ import Coach from './pages/Coach';
 import TV from './pages/TV';
 import Login from './pages/Login';
 import Signup from './pages/Signup';
+import DebugFlow from './pages/DebugFlow';
+import { Shield } from 'lucide-react';
 
 const ProtectedRoute = ({ children, roles }: { children: React.ReactNode; roles?: string[] }) => {
   const { user, loading, logout } = useAuth();
@@ -23,9 +25,23 @@ const ProtectedRoute = ({ children, roles }: { children: React.ReactNode; roles?
   if (!user) return <Navigate to="/login" />;
   
   if (user.status !== 'approved') {
-    // If not approved, sign out and go to login
-    logout();
-    return <Navigate to="/login" />;
+    return (
+      <div className="min-h-screen bg-background flex flex-col items-center justify-center p-6 text-center">
+        <div className="w-20 h-20 bg-surface-container-low rounded-3xl border border-outline-variant/10 flex items-center justify-center mb-6">
+          <Shield className="w-10 h-10 text-primary animate-pulse" />
+        </div>
+        <h1 className="text-2xl font-headline font-black text-on-surface uppercase italic mb-2">Acesso Pendente</h1>
+        <p className="text-on-surface-variant text-xs font-bold uppercase tracking-widest max-w-xs leading-relaxed">
+          Sua conta foi criada com sucesso e está aguardando aprovação de um administrador.
+        </p>
+        <button 
+          onClick={() => logout()} 
+          className="mt-8 text-primary font-headline font-black uppercase italic text-sm hover:underline"
+        >
+          SAIR DA CONTA
+        </button>
+      </div>
+    );
   }
 
   if (roles && !roles.includes(user.role)) return <Navigate to="/" />;
@@ -50,6 +66,7 @@ export default function App() {
             <Route path="profile" element={<Profile />} />
             <Route path="progress" element={<Progress />} />
             <Route path="avatar" element={<AvatarCustomization />} />
+            <Route path="debug-flow" element={<DebugFlow />} />
             <Route path="admin" element={<ProtectedRoute roles={['admin']}><Admin /></ProtectedRoute>} />
             <Route path="coach" element={<ProtectedRoute roles={['coach', 'admin']}><Coach /></ProtectedRoute>} />
           </Route>

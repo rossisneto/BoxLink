@@ -42,6 +42,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const fetchUserProfile = async (userId: string) => {
+    setLoading(true);
     try {
       const { data, error } = await supabase
         .from('profiles')
@@ -53,7 +54,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       
       if (!data) {
         console.warn('Profile not found for user:', userId);
-        await supabase.auth.signOut();
+        // Don't sign out immediately, maybe the trigger is slow
         setUser(null);
         return;
       }
@@ -77,9 +78,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const login = async (email: string, password: string) => {
+    setLoading(true);
     try {
       const { data: authData, error: authError } = await supabase.auth.signInWithPassword({ email, password });
-      if (authError) return { error: authError };
+      if (authError) {
+        setLoading(false);
+        return { error: authError };
+      }
       
       if (authData.user) {
         await fetchUserProfile(authData.user.id);
