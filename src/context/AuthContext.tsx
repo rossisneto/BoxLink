@@ -93,11 +93,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
       
       if (authData.user) {
-        const profile = await fetchUserProfile(authData.user.id);
-        if (!profile) {
-          setLoading(false);
-          return { error: { message: 'Perfil não encontrado. Entre em contato com o suporte.' } };
-        }
+        // Tenta buscar o perfil em segundo plano para não bloquear o login
+        fetchUserProfile(authData.user.id);
       }
       
       return { error: null };
