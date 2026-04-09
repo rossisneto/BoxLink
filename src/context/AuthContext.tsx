@@ -41,22 +41,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => subscription.unsubscribe();
   }, []);
 
-  const fetchUserProfile = async (userId: string) => {
+  const fetchUserProfile = async (userId: string, retries = 3) => {
+    setLoading(true);
     try {
-      const response = await fetch(`/api/profile/${userId}`);
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        console.error('Profile fetch failed:', response.status, errorData);
-        
-        if (response.status === 404) {
-          console.warn('Profile not found for user:', userId);
-          await supabase.auth.signOut();
-          setUser(null);
-          return;
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*, checkins(*)')
+        .eq('id', userId)
+        .maybeSingle();
+
+      if (error) throw error;
+      
+      if (!data) {
+        if (retries > 0) {
+          console.log(`Profile not found, retrying... (${retries} attempts left)`);
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          return fetchUserProfile(userId, retries - 1);
         }
-        
-        // If it's not a 404, we might want to retry or just show an error
-        throw new Error(errorData.message || 'Erro ao carregar perfil');
+        console.warn('Profile not found for user:', userId);
+        setUser(null);
+        return;
       }
       
       const data = await response.json().catch(err => {
@@ -75,66 +79,60 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       };
       
       setUser(mappedUser);
+      return mappedUser;
     } catch (error) {
       console.error('Error fetching user profile:', error);
+      return null;
     } finally {
       setLoading(false);
     }
   };
 
   const login = async (email: string, password: string) => {
+    setLoading(true);
     try {
-      const response = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password })
-      });
-      
-      const data = await response.json();
-      
-      if (!response.ok) {
-        return { error: { message: data.message || 'Erro ao entrar' } };
+      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({ email, password });
+      if (authError) {
+        setLoading(false);
+        return { error: authError };
       }
       
-      // Also sign in the supabase client to get the session for other things
-      const { error: authError } = await supabase.auth.signInWithPassword({ email, password });
-      if (authError) return { error: authError };
+      if (authData.user) {
+        // Tenta buscar o perfil em segundo plano para não bloquear o login
+        fetchUserProfile(authData.user.id);
+      }
       
-      const mappedUser: User = {
-        ...data,
-        avatar: {
-          equipped: data.avatar_equipped,
-          inventory: data.avatar_inventory
-        },
-        checkins: data.checkins || [],
-        paidBonuses: data.paid_bonuses || []
-      };
-      
-      setUser(mappedUser);
       return { error: null };
     } catch (error: any) {
       console.error('Login error:', error);
+      setLoading(false);
       return { error: { message: 'Erro ao conectar com o servidor' } };
     }
   };
 
   const signup = async (email: string, password: string, name: string) => {
+    setLoading(true);
     try {
-      const response = await fetch('/api/auth/signup', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password, name })
+      const { data: authData, error: authError } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: {
+            name: name
+          }
+        }
       });
       
-      const data = await response.json();
-      
-      if (!response.ok) {
-        return { error: { message: data.message || 'Erro ao cadastrar' } };
+      if (authError) {
+        setLoading(false);
+        return { error: authError };
       }
       
+      setLoading(false);
       return { error: null };
     } catch (error: any) {
       console.error('Signup error:', error);
+      setLoading(false);
       return { error: { message: 'Erro ao conectar com o servidor' } };
     }
   };

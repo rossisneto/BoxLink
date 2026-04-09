@@ -8,6 +8,8 @@ import confetti from 'canvas-confetti';
 import AvatarPreview from '../components/AvatarPreview';
 import { supabase } from '../lib/supabase';
 
+import { addReward } from '../utils/rewards';
+
 export default function Dashboard() {
   const { user, updateUser } = useAuth();
   const [wod, setWod] = useState<Wod | null>(null);
@@ -17,34 +19,56 @@ export default function Dashboard() {
   const [selectedClass, setSelectedClass] = useState<string | null>(null);
   const [announcements, setAnnouncements] = useState<string[]>([]);
 
-  useEffect(() => {
-    const fetchDashboardData = async () => {
-      const today = new Date().toISOString().split('T')[0];
-      const [{ data: wodData }, { data: settingsData }, { data: scheduleData }] = await Promise.all([
-        supabase.from('wods').select('*').eq('date', today).maybeSingle(),
-        supabase.from('box_settings').select('announcements').single(),
-        supabase.from('schedule').select('time,end_time,coach').eq('is_active', true).order('time', { ascending: true })
-      ]);
+  const fetchData = async () => {
+    // Fetch WODs
+    const { data: wodsData } = await supabase.from('wods').select('*').order('date', { ascending: false }).limit(1);
+    if (wodsData) setWod(wodsData[0]);
+    
+    // Fetch Box Settings
+    const { data: settingsData } = await supabase.from('box_settings').select('*').single();
+    if (settingsData?.tv_config?.announcements) {
+      setAnnouncements(settingsData.tv_config.announcements);
+    }
 
-      setWod((wodData as Wod) || null);
-      if ((settingsData as any)?.announcements) {
-        setAnnouncements((settingsData as any).announcements);
-      }
-
-      const formattedSchedule = ((scheduleData || []) as any[]).map((item) => ({
-        time: item.time,
-        endTime: item.end_time,
-        coach: item.coach,
-      }));
-      setSchedule(formattedSchedule);
-
+    // Fetch Schedule
+    const { data: scheduleData } = await supabase.from('schedule').select('*').eq('is_active', true);
+    if (scheduleData) {
+      setSchedule(scheduleData);
       const now = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', hour12: false });
-      const current = formattedSchedule.find((item: any) => now >= item.time && now <= item.endTime);
+      const current = scheduleData.find((s: any) => now >= s.time && now <= s.end_time);
       if (current) setSelectedClass(current.time);
-    };
+    }
+  };
 
-    fetchDashboardData();
+  useEffect(() => {
+    fetchData();
+
+    const channel = supabase
+      .channel('dashboard_changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'schedule' }, () => fetchData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'wods' }, () => fetchData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'box_settings' }, () => fetchData())
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
+
+  const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => {
+    const R = 6371e3; // metres
+    const φ1 = lat1 * Math.PI/180;
+    const φ2 = lat2 * Math.PI/180;
+    const Δφ = (lat2-lat1) * Math.PI/180;
+    const Δλ = (lon2-lon1) * Math.PI/180;
+
+    const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
+              Math.cos(φ1) * Math.cos(φ2) *
+              Math.sin(Δλ/2) * Math.sin(Δλ/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+
+    return R * c; // in metres
+  };
 
   const handleCheckin = () => {
     if (!selectedClass) {
@@ -55,39 +79,73 @@ export default function Dashboard() {
     setCheckinMessage(null);
 
     navigator.geolocation.getCurrentPosition(
-      async () => {
+      async (position) => {
+        const { latitude, longitude } = position.coords;
         try {
-          const { data, error } = await supabase.rpc('perform_daily_checkin', {
-            p_user_id: user?.id,
-            p_class_time: selectedClass,
-            p_timezone: 'America/Sao_Paulo'
-          });
+          // 1. Get Box Settings for location validation
+          const { data: box } = await supabase.from('box_settings').select('*').single();
+          if (!box) throw new Error('Configurações do box não encontradas');
 
-          if (!error) {
-            const checkinData = (data || {}) as any;
-            const earnedXp = Number(checkinData.xp || 0);
-            const earnedCoins = Number(checkinData.coins || 0);
-            const levelUp = Boolean(checkinData.levelUp ?? checkinData.level_up);
-            setCheckinMessage(`Check-in realizado! +${earnedXp} XP, +${earnedCoins} BrazaCoins`);
-            confetti({ particleCount: 100, spread: 70, origin: { y: 0.6 } });
-            if (levelUp) {
-              setTimeout(() => {
-                confetti({ particleCount: 200, spread: 100, origin: { y: 0.5 }, colors: ['#CAFD00', '#FFFFFF'] });
-              }, 500);
-            }
-            const updatedUser = {
-              ...user!,
-              xp: user!.xp + earnedXp,
-              coins: user!.coins + earnedCoins,
-              level: levelUp ? (user!.level + 1) : user!.level,
-              checkins: [...user!.checkins, { date: new Date().toISOString().split('T')[0], timestamp: new Date().toISOString(), classTime: selectedClass }]
-            };
-            updateUser(updatedUser as User);
-          } else {
-            setCheckinMessage('Não foi possível realizar o check-in agora.');
+          const distance = calculateDistance(latitude, longitude, box.lat, box.lng);
+          if (distance > (box.radius || 500)) {
+            setCheckinMessage(`Você está muito longe do box (${Math.round(distance)}m). Aproxime-se para fazer check-in.`);
+            setIsCheckingIn(false);
+            return;
           }
-        } catch (e) {
-          setCheckinMessage('Erro ao conectar com o servidor');
+
+          // 2. Register Check-in
+          const today = new Date().toISOString().split('T')[0];
+          const { error: checkinError } = await supabase
+            .from('checkins')
+            .insert({
+              user_id: user?.id,
+              date: today,
+              class_time: selectedClass
+            });
+
+          if (checkinError) {
+            if (checkinError.code === '23505') { // Unique constraint
+              setCheckinMessage('Você já realizou check-in hoje!');
+            } else {
+              throw checkinError;
+            }
+            setIsCheckingIn(false);
+            return;
+          }
+
+          // 3. Add Rewards
+          const { data: economy } = await supabase.from('avatar_economy_settings').select('*').eq('is_active', true).single();
+          const xp = economy?.xp_per_checkin || 20;
+          const coins = economy?.coins_per_checkin || 5;
+
+          const rewardResult = await addReward(user?.id!, 'checkin', xp, coins, `Check-in: ${selectedClass}`);
+          
+          setCheckinMessage(`Check-in realizado! +${xp} XP, +${coins} BrazaCoins`);
+          confetti({ particleCount: 100, spread: 70, origin: { y: 0.6 } });
+          
+          if (rewardResult?.levelUp) {
+            setTimeout(() => {
+              confetti({ particleCount: 200, spread: 100, origin: { y: 0.5 }, colors: ['#CAFD00', '#FFFFFF'] });
+            }, 500);
+          }
+
+          // 4. Refresh user profile
+          const { data: updatedProfile } = await supabase.from('profiles').select('*, checkins(*)').eq('id', user?.id).single();
+          if (updatedProfile) {
+            const mappedUser: User = {
+              ...updatedProfile,
+              avatar: {
+                equipped: updatedProfile.avatar_equipped,
+                inventory: updatedProfile.avatar_inventory
+              },
+              checkins: updatedProfile.checkins || [],
+              paidBonuses: updatedProfile.paid_bonuses || []
+            };
+            updateUser(mappedUser);
+          }
+        } catch (e: any) {
+          console.error(e);
+          setCheckinMessage('Erro ao realizar check-in: ' + (e.message || 'Erro desconhecido'));
         } finally {
           setIsCheckingIn(false);
         }
@@ -110,7 +168,7 @@ export default function Dashboard() {
           <AvatarPreview equipped={user?.avatar.equipped!} size="sm" className="border-2" />
           <div>
             <h1 className="text-2xl font-headline font-black text-on-surface tracking-tight uppercase italic leading-none">
-              OLÁ, <span className="text-primary">{user?.name?.split(' ')[0] || 'ATLETA'}</span>
+              OLÁ, <span className="text-primary">{user?.name.split(' ')[0]}</span>
             </h1>
             <p className="text-on-surface-variant text-[10px] font-bold tracking-widest uppercase mt-1 italic">Pronto para o treino?</p>
           </div>
@@ -166,7 +224,7 @@ export default function Dashboard() {
                 >
                   <span className="text-sm font-headline font-black">{s.time}</span>
                   <span className={cn("text-[8px] font-bold uppercase tracking-tighter", selectedClass === s.time ? "text-background/60" : "text-on-surface-variant")}>
-                    {s.coach?.split(' ')[0] || 'COACH'}
+                    {s.coach.split(' ')[0]}
                   </span>
                 </button>
               ))}

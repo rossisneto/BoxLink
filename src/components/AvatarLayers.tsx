@@ -61,11 +61,6 @@ export const AvatarLayers = {
       </g>
     )
   },
-  head_accessory: {
-    'head_1': (color: string) => (
-      <path d="M65 35a35 35 0 0 1 70 0v10H65zM135 45h30v5h-30z" fill={color} />
-    )
-  },
   accessory: {
     'acc_1': (color: string) => (
       <g fill={color}>

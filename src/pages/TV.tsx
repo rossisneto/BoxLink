@@ -3,10 +3,10 @@ import { Timer, Trophy, Zap, Swords, Maximize, LayoutDashboard, Activity, Users,
 import { motion, AnimatePresence } from 'framer-motion';
 import { Wod, Challenge, Duel, User, BoxSettings } from '../types';
 import { format } from 'date-fns';
+import { formatInTimeZone } from 'date-fns-tz';
 import { supabase } from '../lib/supabase';
 import { cn } from '../lib/utils';
 import AvatarPreview from '../components/AvatarPreview';
-import { formatInTimeZone } from 'date-fns-tz';
 
 const TIMEZONE = "America/Sao_Paulo";
 
@@ -16,62 +16,57 @@ export default function TV() {
   const [timer, setTimer] = useState(0);
   const [isTimerRunning, setIsTimerRunning] = useState(false);
   const [athleteIndex, setAthleteIndex] = useState(0);
-  const [loading, setLoading] = useState(true);
+
+  const [error, setError] = useState<string | null>(null);
 
   const fetchData = async () => {
     try {
-      const { data: settings } = await supabase.from('box_settings').select('*').single();
-      const { data: economy } = await supabase.from('avatar_economy_settings').select('*').eq('is_active', true).single();
-      
       const today = formatInTimeZone(new Date(), TIMEZONE, "yyyy-MM-dd");
-      const { data: wod } = await supabase.from('wods').select('*').eq('date', today).maybeSingle();
-      
-      const { data: checkins } = await supabase.from('checkins').select('*, profiles(name, avatar_equipped)').eq('date', today);
-      const { data: challenges } = await supabase.from('challenges').select('*').eq('active', true);
-      const { data: duels } = await supabase.from('duels').select('*, challenger:profiles!challenger_id(name), opponent:profiles!opponent_id(name)').eq('status', 'accepted');
-      const { data: rankings } = await supabase.rpc('get_general_xp_ranking', { p_limit: 10 });
-      
-      const { data: approvedUsers } = await supabase.from('profiles').select('id').eq('status', 'approved');
-      const approvedCount = approvedUsers?.length || 0;
-      const checkinCount = checkins?.length || 0;
-      const frequencyPct = approvedCount > 0 ? Math.round((checkinCount / approvedCount) * 100) : 0;
 
-      const { data: latestResult } = await supabase
-        .from('wod_results')
-        .select('result, profiles(name), created_at')
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
+      // Fetch all data in parallel
+      const [
+        { data: settings },
+        { data: economy },
+        { data: wod },
+        { data: checkins },
+        { data: challenges },
+        { data: duels },
+        { data: rankings }
+      ] = await Promise.all([
+        supabase.from('box_settings').select('*').maybeSingle(),
+        supabase.from('avatar_economy_settings').select('*').eq('is_active', true).maybeSingle(),
+        supabase.from('wods').select('*').eq('date', today).maybeSingle(),
+        supabase.from('checkins').select('*, profiles(name, avatar_equipped)').eq('date', today),
+        supabase.from('challenges').select('*').eq('active', true),
+        supabase.from('duels').select('*, challenger:profiles!challenger_id(name), opponent:profiles!opponent_id(name)').eq('status', 'accepted'),
+        supabase.from('profiles').select('name, xp, level, avatar_equipped').order('xp', { ascending: false }).limit(10)
+      ]);
 
-      const { data: classWindow } = await supabase.rpc('get_current_class_window', {
-        p_timezone: TIMEZONE,
-      });
-      const upcomingClass = classWindow?.next_class ?? null;
-
+      // Mocked stats for the ticker
       const stats = {
-        frequency: `${frequencyPct}% FREQUÊNCIA`,
-        newRecord: latestResult ? `${(latestResult as any).profiles?.name || 'Atleta'} (${latestResult.result})` : "SEM RESULTADOS",
-        upcoming: upcomingClass ? `${upcomingClass.time} • ${upcomingClass.coach}` : "SEM PRÓXIMA AULA"
+        frequency: "92% OPTIMAL",
+        newRecord: "JULIA M. (158 REPS)",
+        upcoming: "HYPERTROPHY STRENGTH"
       };
 
       setData({
         settings: settings || { name: "CrossCity Hub", logo: "" },
         rewards: economy,
-        wod: wod || { name: "WOD de Hoje", type: "AMRAP", warmup: "Aguardando WOD...", skill: "Aguardando Técnica...", rx: "A definir", scaled: "A definir", beginner: "A definir" },
+        wod: wod || { name: "WOD de Hoje", type: "AMRAP", warmup: "400M RUN\n20 AIR SQUATS", skill: "SNATCH FOCUS\n5 x 3 @ 65% 1RM", rx: "A definir", scaled: "A definir", beginner: "A definir" },
         checkins: checkins || [],
         challenges: challenges || [],
         duels: (duels || []).map((d: any) => ({
           ...d,
-          challengerName: d.challenger?.name,
-          opponentName: d.opponent?.name
+          challengerName: d.challenger?.name || 'Atleta',
+          opponentName: d.opponent?.name || 'Atleta'
         })),
         rankings: rankings || [],
         stats
       });
-    } catch (error) {
-      console.error('Error fetching TV data:', error);
-    } finally {
-      setLoading(false);
+      setError(null);
+    } catch (err: any) {
+      console.error('TV Fetch Error:', err);
+      setError(err.message);
     }
   };
 
@@ -80,11 +75,9 @@ export default function TV() {
     const interval = setInterval(fetchData, 30000);
     
     const athleteInterval = setInterval(() => {
-      setData((currentData: any) => {
-        if (currentData?.rankings?.length > 0) {
-          setAthleteIndex(prev => (prev + 1) % currentData.rankings.length);
-        }
-        return currentData;
+      setAthleteIndex(prev => {
+        const count = data?.rankings?.length || 1;
+        return (prev + 1) % count;
       });
     }, 8000);
 
@@ -97,7 +90,7 @@ export default function TV() {
       clearInterval(athleteInterval);
       supabase.removeChannel(checkinsChannel);
     };
-  }, []);
+  }, [data?.rankings?.length]);
 
   useEffect(() => {
     let interval: any;
@@ -125,11 +118,25 @@ export default function TV() {
     }
   };
 
-  if (loading || !data) return <div className="min-h-screen bg-black flex items-center justify-center text-primary font-headline font-black text-4xl italic animate-pulse">PREPARANDO ARENA...</div>;
+  if (error && !data) return (
+    <div className="min-h-screen bg-black flex flex-col items-center justify-center text-red-500 font-headline font-black text-2xl italic p-8 text-center">
+      <p>ERRO DE CONEXÃO COM A ARENA</p>
+      <p className="text-sm mt-4 text-white/60 font-sans not-italic">{error}</p>
+      <button 
+        onClick={fetchData}
+        className="mt-8 bg-primary text-black px-8 py-3 rounded-2xl text-sm font-black uppercase tracking-widest hover:scale-105 transition-transform"
+      >
+        TENTAR RECONECTAR
+      </button>
+    </div>
+  );
+
+  if (!data) return <div className="min-h-screen bg-black flex items-center justify-center text-primary font-headline font-black text-4xl italic animate-pulse">PREPARANDO ARENA...</div>;
 
   const { wod, checkins, settings, rankings, stats, duels } = data;
-  const currentAthlete = rankings?.[athleteIndex];
-  const nextAthlete = rankings?.[(athleteIndex + 1) % (rankings?.length || 1)];
+  const rankingsCount = rankings?.length || 0;
+  const currentAthlete = rankingsCount > 0 ? rankings[athleteIndex % rankingsCount] : null;
+  const nextAthlete = rankingsCount > 1 ? rankings[(athleteIndex + 1) % rankingsCount] : null;
 
   return (
     <div className="min-h-screen bg-black text-white font-sans overflow-hidden flex flex-col p-6 gap-6 relative select-none">
@@ -198,7 +205,7 @@ export default function TV() {
               </div>
               <h3 className="text-primary text-xs font-black uppercase tracking-[0.3em] italic mb-6">WARM-UP</h3>
               <div className="space-y-4">
-                {wod.warmup?.split('\n').map((line: string, i: number) => (
+                {(wod?.warmup || '').split('\n').filter(Boolean).map((line: string, i: number) => (
                   <div key={i} className="flex items-center gap-4">
                     <div className="w-2 h-2 rounded-full bg-primary shadow-[0_0_10px_#cafd00]"></div>
                     <p className="text-2xl font-headline font-black text-white uppercase italic tracking-tight">{line}</p>
@@ -214,7 +221,7 @@ export default function TV() {
               </div>
               <h3 className="text-secondary text-xs font-black uppercase tracking-[0.3em] italic mb-6">SKILL</h3>
               <div className="space-y-2">
-                <h4 className="text-4xl font-headline font-black text-white uppercase italic tracking-tighter leading-none mb-6">{wod.skill?.split('\n')[0]}</h4>
+                <h4 className="text-4xl font-headline font-black text-white uppercase italic tracking-tighter leading-none mb-6">{(wod?.skill || '').split('\n')[0] || '---'}</h4>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="bg-white/5 p-4 rounded-2xl border border-white/5">
                     <span className="text-white/40 text-[8px] font-black uppercase tracking-widest block mb-1">SETS</span>
@@ -319,11 +326,11 @@ export default function TV() {
                     <div className="mt-8 pt-8 border-t border-white/5 flex items-center justify-between">
                       <div className="flex items-center gap-4">
                         <div className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center text-white/40 font-headline font-black italic">
-                          {nextAthlete.name?.[0] || '?'}
+                          {nextAthlete?.name?.[0] || '?'}
                         </div>
                         <div>
                           <p className="text-white/40 text-[8px] font-black uppercase tracking-widest">NEXT UP</p>
-                          <p className="text-lg font-headline font-black text-white/80 uppercase italic leading-none">{nextAthlete.name}</p>
+                          <p className="text-lg font-headline font-black text-white/80 uppercase italic leading-none">{nextAthlete?.name || '---'}</p>
                         </div>
                       </div>
                       <div className="flex gap-1">

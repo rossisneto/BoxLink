@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../context/AuthContext';
+import { supabase } from '../lib/supabase';
 import { 
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   BarChart, Bar, Cell
@@ -13,7 +14,6 @@ import {
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { cn } from '../lib/utils';
-import { supabase } from '../lib/supabase';
 
 interface WodResult {
   id: string;
@@ -57,19 +57,27 @@ export default function Progress() {
 
     const fetchData = async () => {
       try {
-        const [{ data: wodRes, error: wodError }, { data: rewardRes, error: rewardError }, { data: prRes, error: prError }] = await Promise.all([
-          supabase.from('wod_results').select('id, wod_id, result, type, created_at, wods(name, date, type)').eq('user_id', user.id).order('created_at', { ascending: false }),
-          supabase.from('reward_history').select('*').eq('user_id', user.id).order('created_at', { ascending: false }),
-          supabase.from('personal_records').select('id, exercise, value, date').eq('user_id', user.id).order('date', { ascending: false })
+        const [wodRes, rewardRes, prRes] = await Promise.all([
+          supabase
+            .from('wod_results')
+            .select('*, wods(*)')
+            .eq('user_id', user.id)
+            .order('created_at', { ascending: false }),
+          supabase
+            .from('reward_history')
+            .select('*')
+            .eq('user_id', user.id)
+            .order('created_at', { ascending: false }),
+          supabase
+            .from('personal_records')
+            .select('*')
+            .eq('user_id', user.id)
+            .order('date', { ascending: false })
         ]);
 
-        if (wodError || rewardError || prError) {
-          console.error(wodError || rewardError || prError);
-        }
-
-        setWodHistory((wodRes as WodResult[]) || []);
-        setRewardHistory((rewardRes as RewardHistory[]) || []);
-        setPrs((prRes as PR[]) || []);
+        if (wodRes.data) setWodHistory(wodRes.data);
+        if (rewardRes.data) setRewardHistory(rewardRes.data);
+        if (prRes.data) setPrs(prRes.data);
       } catch (error) {
         console.error('Error fetching progress data:', error);
       } finally {
@@ -78,7 +86,7 @@ export default function Progress() {
     };
 
     fetchData();
-  }, [user]);
+  }, [user?.id]);
 
   const challengeHistory = rewardHistory.filter(h => h.type === 'challenge');
   

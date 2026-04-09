@@ -84,9 +84,10 @@ export default function Login() {
           {error && <p className="text-center text-[10px] font-black text-error uppercase tracking-widest">{error}</p>}
           <button
             type="submit"
-            className="w-full bg-primary text-background py-5 rounded-2xl font-headline font-black text-lg shadow-[0_10px_30px_rgba(202,253,0,0.2)] hover:scale-[0.98] active:scale-95 transition-all uppercase italic tracking-tight flex items-center justify-center gap-2 mt-4"
+            disabled={loading}
+            className="w-full bg-primary text-background py-5 rounded-2xl font-headline font-black text-lg shadow-[0_10px_30px_rgba(202,253,0,0.2)] hover:scale-[0.98] active:scale-95 transition-all uppercase italic tracking-tight flex items-center justify-center gap-2 mt-4 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            ENTRAR NA ARENA <ChevronRight className="w-5 h-5" />
+            {loading ? 'ENTRANDO...' : 'ENTRAR NA ARENA'} <ChevronRight className="w-5 h-5" />
           </button>
         </form>
 
