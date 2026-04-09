@@ -10,7 +10,7 @@ export default function Signup() {
   const [password, setPassword] = useState('');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
-  const { signup } = useAuth();
+  const { signup, loading } = useAuth();
   const navigate = useNavigate();
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -85,9 +85,10 @@ export default function Signup() {
           {message && <p className="text-center text-[10px] font-black text-primary uppercase tracking-widest">{message}</p>}
           <button
             type="submit"
-            className="w-full bg-secondary text-background py-5 rounded-2xl font-headline font-black text-lg shadow-[0_10px_30px_rgba(255,116,57,0.2)] hover:scale-[0.98] active:scale-95 transition-all uppercase italic tracking-tight flex items-center justify-center gap-2 mt-4"
+            disabled={loading}
+            className="w-full bg-secondary text-background py-5 rounded-2xl font-headline font-black text-lg shadow-[0_10px_30px_rgba(255,116,57,0.2)] hover:scale-[0.98] active:scale-95 transition-all uppercase italic tracking-tight flex items-center justify-center gap-2 mt-4 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            SOLICITAR ACESSO <ChevronRight className="w-5 h-5" />
+            {loading ? 'SOLICITANDO...' : 'SOLICITAR ACESSO'} <ChevronRight className="w-5 h-5" />
           </button>
         </form>
 

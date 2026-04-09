@@ -41,7 +41,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => subscription.unsubscribe();
   }, []);
 
-  const fetchUserProfile = async (userId: string) => {
+  const fetchUserProfile = async (userId: string, retries = 3) => {
     setLoading(true);
     try {
       const { data, error } = await supabase
@@ -53,8 +53,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (error) throw error;
       
       if (!data) {
+        if (retries > 0) {
+          console.log(`Profile not found, retrying... (${retries} attempts left)`);
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          return fetchUserProfile(userId, retries - 1);
+        }
         console.warn('Profile not found for user:', userId);
-        // Don't sign out immediately, maybe the trigger is slow
         setUser(null);
         return;
       }
@@ -70,8 +74,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       };
       
       setUser(mappedUser);
+      return mappedUser;
     } catch (error) {
       console.error('Error fetching user profile:', error);
+      return null;
     } finally {
       setLoading(false);
     }
@@ -87,17 +93,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
       
       if (authData.user) {
-        await fetchUserProfile(authData.user.id);
+        const profile = await fetchUserProfile(authData.user.id);
+        if (!profile) {
+          setLoading(false);
+          return { error: { message: 'Perfil não encontrado. Entre em contato com o suporte.' } };
+        }
       }
       
       return { error: null };
     } catch (error: any) {
       console.error('Login error:', error);
-      return { error: { message: 'Erro ao conectar com o Supabase' } };
+      setLoading(false);
+      return { error: { message: 'Erro ao conectar com o servidor' } };
     }
   };
 
   const signup = async (email: string, password: string, name: string) => {
+    setLoading(true);
     try {
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email,
@@ -109,12 +121,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       });
       
-      if (authError) return { error: authError };
+      if (authError) {
+        setLoading(false);
+        return { error: authError };
+      }
       
+      setLoading(false);
       return { error: null };
     } catch (error: any) {
       console.error('Signup error:', error);
-      return { error: { message: 'Erro ao conectar com o Supabase' } };
+      setLoading(false);
+      return { error: { message: 'Erro ao conectar com o servidor' } };
     }
   };
 
